@@ -9,9 +9,11 @@ import path from 'node:path';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const allowed = new Set(['/index.html', '/app.js', '/connected.mjs', '/supabase-auth.mjs', '/assets/vendor/supabase.js', '/assets/vendor/supabase-LICENSE.txt', '/insurance-view.mjs', '/api-client.mjs', '/styles.css', '/connected.css', '/pages/overview.html', '/pages/bill.html', '/pages/care.html', '/pages/prescriptions.html', '/assets/map.svg', '/assets/material-symbols-outlined.woff2', ...['literata', 'nunito-sans'].flatMap(font => [400, 600, 700].map(weight => `/assets/${font}-latin-${weight}-normal.woff2`))]);
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' };
-export const apiPaths = /^(?:\/health|\/sample|\/providers|\/prices\/compare|\/data\/status|\/bills\/(?:analyze|ai-review)|\/bill-review\/(?:extract|analyze|observations)|\/care\/(?:recommendations)|\/care-search\/recommend|\/prescription-comparison\/(?:drugs|compare)|\/jobs(?:\/[a-zA-Z0-9-]+)?|\/results(?:\/[a-zA-Z0-9-]+)?|\/documents\/extract|\/auth\/(?:register|login|me|logout)|\/profile(?:\/preferences|\/insurance-card(?:\/file)?|\/insurance(?:\/(?:details|retry|select|sbc))?)?|\/account(?:\/pdf)?|\/reviews(?:\/[a-zA-Z0-9-]+(?:\/pdf)?)?|\/reports\/pdf)$/;
-export function createFrontendServer({ backendUrl = process.env.CLEARCARE_API_URL || 'http://127.0.0.1:8000', assetRoot = root, supabaseConfig = publicSupabaseConfig() } = {}) {
+export const apiPaths = /^(?:\/health|\/sample|\/providers|\/prices\/compare|\/data\/status|\/bills\/(?:analyze|ai-review)|\/bill-review\/(?:extract|analyze|observations)|\/care\/(?:recommendations|search)|\/care-search\/recommend|\/prescription-comparison\/(?:drugs|compare)|\/jobs(?:\/[a-zA-Z0-9-]+)?|\/results(?:\/[a-zA-Z0-9-]+)?|\/documents\/extract|\/auth\/(?:register|login|me|logout)|\/profile(?:\/preferences|\/insurance-card(?:\/file)?|\/insurance(?:\/(?:details|retry|select|sbc|context))?)?|\/account(?:\/pdf)?|\/reviews(?:\/[a-zA-Z0-9-]+(?:\/pdf)?)?|\/reports\/pdf)$/;
+export function createFrontendServer({ backendUrl = process.env.CLEARCARE_API_URL || 'http://127.0.0.1:8000', publicOrigin = process.env.CLEARCARE_PUBLIC_ORIGIN || '', assetRoot = root, supabaseConfig = publicSupabaseConfig() } = {}) {
   const target = new URL(backendUrl);
+  const publicUrl = publicOrigin ? new URL(publicOrigin) : null;
+  if (publicUrl && (publicUrl.protocol !== 'https:' || publicUrl.username || publicUrl.password || publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash)) throw new Error('CLEARCARE_PUBLIC_ORIGIN must be an HTTPS origin without credentials or a path.');
   const authConfig = supabaseConfig.configured ? publicSupabaseConfig({SUPABASE_URL:supabaseConfig.url,SUPABASE_PUBLISHABLE_KEY:supabaseConfig.publishableKey}) : supabaseConfig;
   if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.pathname !== '/' || target.search || target.hash) throw new Error('CLEARCARE_API_URL must be an HTTP(S) origin without credentials or a path.');
   const jsonError = (res, status, detail) => { if (res.headersSent) { res.destroy(); return; } res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ detail })); };
@@ -23,8 +25,10 @@ export function createFrontendServer({ backendUrl = process.env.CLEARCARE_API_UR
       if (!apiPaths.test(apiPath)) { jsonError(res, 404, 'No supported API endpoint matches this action.'); return; }
       const port = server.address().port;
       const validHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+      const validOrigins = validHosts.map(host => `http://${host}`);
+      if (publicUrl) { validHosts.push(publicUrl.host); validOrigins.push(publicUrl.origin); }
       const origin = req.headers.origin;
-      if (!validHosts.includes(req.headers.host) || (origin && !validHosts.some(host => origin === `http://${host}`)) || req.headers['sec-fetch-site'] === 'cross-site') { jsonError(res, 403, 'Origin not allowed.'); return; }
+      if (!validHosts.includes(req.headers.host) || (origin && !validOrigins.includes(origin)) || req.headers['sec-fetch-site'] === 'cross-site') { jsonError(res, 403, 'Origin not allowed.'); return; }
       if (Number(req.headers['content-length'] || 0) > 21 * 1024 * 1024) { jsonError(res, 413, 'Request exceeds 21 MB.'); return; }
       // Validate the browser origin first; translate it to the Go API's own allowed origin.
       const headers = { ...req.headers, host: target.host };

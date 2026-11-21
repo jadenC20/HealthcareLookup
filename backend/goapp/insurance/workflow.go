@@ -31,6 +31,10 @@ func (e *Engine) Run(ctx context.Context, card Document, details *Details) Resul
 			r.warn("card_extraction", "unreadable_fields", "Some card fields could not be read.", "Confirm or correct the extracted details.", extraction.Unreadable...)
 		}
 		r.warn("card_extraction", "unconfirmed_details", "Card details were read by AI and have not been confirmed.", "Confirm the insurer, plan, state and coverage year.", "details_confirmation")
+		r.Status = "needs_details_confirmation"
+		r.step("discovery", "awaiting_confirmation")
+		r.Finish()
+		return r
 	}
 	e.discover(ctx, &r)
 	r.Finish()
@@ -132,6 +136,9 @@ func usable(candidates []Candidate, d Details) []Candidate {
 }
 func baseID(s string) string { return strings.Split(s, "-")[0] }
 func (e *Engine) Select(ctx context.Context, previous Result, id string) (Result, error) {
+	if !previous.DetailsConfirmed {
+		return previous, stageError("details_confirmation_required", "Confirm your plan details before selecting an SBC.")
+	}
 	r := NewResult(previous.Details, previous.DetailsConfirmed)
 	r.Candidates = previous.Candidates
 	for _, c := range previous.Candidates {

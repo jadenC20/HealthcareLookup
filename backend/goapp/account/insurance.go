@@ -150,11 +150,28 @@ func (s *Service) ConfirmInsurance(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, err.Error())
 		return
 	}
+	if body.Details.Insurer == "" || (body.Details.PlanName == "" && body.Details.PlanID == "") || body.Details.State == "" || body.Details.Year == 0 {
+		fail(w, 422, "Confirm the insurer, plan name or public plan ID, state and coverage year before SBC discovery.")
+		return
+	}
+	previous, _ := s.loadInsurance(u.ID)
+	var saved *insurance.Document
+	if previous.Revision == body.Revision && previous.Result.Document != nil {
+		doc := *previous.Result.Document
+		if err := s.db.QueryRow(`SELECT document FROM insurance_workflows WHERE user_id=? AND revision=?`, u.ID, body.Revision).Scan(&doc.Data); err == nil && len(doc.Data) > 0 {
+			saved = &doc
+		}
+	}
 	revision, ok := s.startInsurance(w, u.ID, body.Revision, insurance.NewResult(body.Details, true))
 	if !ok {
 		return
 	}
 	s.runInsurance(w, r, u.ID, revision, func(ctx context.Context) insurance.Result {
+		if saved != nil {
+			confirmed := insurance.NewResult(body.Details, true)
+			confirmed.Selected = previous.Result.Selected
+			return s.insurance.Reinterpret(ctx, confirmed, *saved)
+		}
 		return s.insurance.Run(ctx, insurance.Document{}, &body.Details)
 	})
 }

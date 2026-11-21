@@ -22,14 +22,16 @@ type healthcareAI interface {
 }
 
 func (s *Service) healthContext(user User) insurance.HealthContext {
-	context := insurance.HealthContext{PlanLabel: user.Plan, Status: "no_documented_benefits", Benefits: []insurance.Benefit{}, Cautions: []insurance.Caution{}}
+	context := insurance.HealthContext{PlanLabel: user.Plan, Status: "no_documented_benefits", Benefits: []insurance.Benefit{}, Cautions: []insurance.Caution{}, Limited: true, Warning: "Your SBC is missing or incomplete. You can continue, but insurance guidance is limited and costs or coverage cannot be established."}
 	state, err := s.loadInsurance(user.ID)
 	if err != nil {
 		return context
 	}
 	context.Status = state.Result.Status
 	context.Details = state.Result.Details
-	context.Benefits = state.Result.Benefits
+	if state.Result.DetailsConfirmed {
+		context.Benefits = state.Result.Benefits
+	}
 	context.Cautions = state.Result.Cautions
 	if state.Result.MayBeInaccurate {
 		context.Status = "partial_or_unverified"
@@ -37,7 +39,19 @@ func (s *Service) healthContext(user User) insurance.HealthContext {
 	if state.Result.Document != nil {
 		context.Source = state.Result.Document.URL
 	}
+	if state.Result.DetailsConfirmed && len(context.Benefits) > 0 && state.Result.Status == "ready_with_caution" {
+		context.Limited = false
+		context.Warning = "SBC terms are available, but current enrollment, provider network status and personal deductible balances remain unverified."
+	}
 	return context
+}
+
+func (s *Service) InsuranceContext(w http.ResponseWriter, r *http.Request) {
+	u, ok := s.identity(w, r, false)
+	if !ok {
+		return
+	}
+	respond(w, 200, s.healthContext(u))
 }
 func (s *Service) allowHealthcareAI(w http.ResponseWriter, user User) bool {
 	s.mu.Lock()
@@ -140,9 +154,10 @@ func (s *Service) AIReview(w http.ResponseWriter, r *http.Request) {
 	}
 	rules := billreview.Analyze(input.Request)
 	plan := s.healthContext(user)
+	rules["insurance_context"] = plan
 	advice, err := s.healthAI.ReviewBill(r.Context(), input.Request, rules, plan)
 	if err != nil {
-		rules["ai"] = map[string]any{"status": "unavailable", "detail": err.Error()}
+		rules["ai"] = map[string]any{"status": "unavailable", "detail": err.Error(), "insurance_context": plan}
 	} else {
 		rules["ai"] = map[string]any{"status": "completed", "result": advice, "insurance_context": plan}
 		rules["inquiry_draft"] = advice.Inquiry

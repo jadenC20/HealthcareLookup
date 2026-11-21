@@ -17,6 +17,8 @@ type HealthContext struct {
 	Benefits  []Benefit `json:"benefits"`
 	Cautions  []Caution `json:"cautions"`
 	Source    string    `json:"source_url"`
+	Limited   bool      `json:"limited_context"`
+	Warning   string    `json:"warning,omitempty"`
 }
 type ExtractedBillLine struct {
 	ID          string   `json:"line_id"`

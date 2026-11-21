@@ -6,7 +6,7 @@ export function createApi({ fetchImpl = globalThis.fetch, onUnauthorized = () =>
   let csrf = '';
   async function request(path, { method = 'GET', body, binary = false, signal } = {}) {
     const headers = { Accept: binary ? '*/*' : 'application/json' };
-    if (/^\/(?:auth\/me|profile|reviews|account|documents\/extract|bills\/ai-review|care\/recommendations|reports\/pdf)(?:[/?]|$)/.test(path)) {
+    if (/^\/(?:auth\/me|profile|reviews|account|documents\/extract|bills\/ai-review|care\/(?:recommendations|search)|reports\/pdf)(?:[/?]|$)/.test(path)) {
       const accessToken = await getAccessToken();
       if (accessToken) headers.Authorization = 'Bearer ' + accessToken;
     }
