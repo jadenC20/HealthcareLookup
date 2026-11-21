@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import main
 import database
-from documents import extract
+from bill_review.documents import extract
 
 @pytest.fixture
 def client(tmp_path,monkeypatch):
