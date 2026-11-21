@@ -5,11 +5,14 @@ import (
 	"clearcare/billreview"
 	"clearcare/caresearch"
 	"clearcare/evidence"
+	"clearcare/prescription"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -372,4 +375,41 @@ func (s *Service) allowFeature(w http.ResponseWriter, uid string) bool {
 	}
 	s.attempts[key] = append(kept, now)
 	return true
+}
+
+// MedicineSearch fills a missing pickup/delivery location from the patient's
+// saved preferences (city/state), then the profile city, before searching.
+func (s *Service) MedicineSearch(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, ok := s.identity(w, r, false)
+		if !ok {
+			return
+		}
+		var request prescription.MedicineSearchRequest
+		if evidence.Decode(r, &request) != nil {
+			fail(w, 422, "Enter a medicine name, from 2 to 200 characters.")
+			return
+		}
+		if request.Location.Empty() {
+			var data string
+			var p caresearch.Preferences
+			if s.db.QueryRow(`SELECT payload FROM patient_preferences WHERE user_id=?`, u.ID).Scan(&data) == nil {
+				json.Unmarshal([]byte(data), &p)
+			}
+			if strings.TrimSpace(p.City) != "" {
+				request.City, request.State, request.Source = p.City, p.State, "preferences"
+			} else if strings.TrimSpace(u.City) != "" {
+				request.City, request.Source = u.City, "profile"
+				if zip := strings.TrimSpace(u.City); len(zip) == 5 && strings.Trim(zip, "0123456789") == "" {
+					request.City, request.ZIP = "", zip
+				}
+			}
+		} else {
+			request.Source = "request"
+		}
+		body, _ := json.Marshal(request)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
+		handler(w, r)
+	}
 }

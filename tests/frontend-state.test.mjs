@@ -144,7 +144,7 @@ function medicineHarness(request){
 test('medicine finder submits a name alone and polls the asynchronous result',async()=>{
  let polls=0;const h=medicineHarness(async path=>path==='/prescription-comparison/search'?{job:{id:'job-1',status:'queued',poll_url:'/jobs/job-1'}}:++polls===1?{job:{status:'running',poll_url:'/jobs/job-1'}}:{job:{status:'completed',result:{medicine:'atorvastatin',status:'links_only',offers:[],sources:['https://example.test/atorvastatin'],limitations:['Check the current quantity and price.']}}});
  await h.search();assert.equal(h.calls[0].options.method,'POST');assert.equal(h.calls[0].options.body.medicine,'atorvastatin');assert.equal(h.calls.length,3);assert.equal(h.submit.disabled,false);
- assert.match(h.nodes.get('#medicine-results').innerHTML,/Compare prices/);assert.match(h.nodes.get('#medicine-results').innerHTML,/No verified price amount was found/);assert.match(h.host.innerHTML,/Find lower prices/);assert.doesNotMatch(h.host.innerHTML,/name="(?:dose|quantity|zip|rxcui|consent)"/);
+ assert.match(h.nodes.get('#medicine-results').innerHTML,/Compare prices/);assert.match(h.nodes.get('#medicine-results').innerHTML,/No verified price amount was found/);assert.match(h.host.innerHTML,/Find lower prices/);assert.doesNotMatch(h.host.innerHTML,/name="(?:dose|quantity|rxcui|consent)"/);assert.doesNotMatch(h.host.innerHTML,/name="zip"[^>]*required/);assert.equal(h.calls[0].options.body.zip,undefined);
 });
 
 test('medicine offers compare matching quantities and never invent a missing price',()=>{
@@ -152,6 +152,10 @@ test('medicine offers compare matching quantities and never invent a missing pri
  const html=h.run('medicineResults(medicineData)');assert.ok(html.indexOf('Lower pharmacy')<html.indexOf('Higher pharmacy'));assert.ok(html.indexOf('Higher pharmacy')<html.indexOf('Different quantity'));assert.match(html,/Check the source for the current price/);assert.doesNotMatch(html,/\$0\.00|Unsafe source|javascript:|>\$1\.00</);
 });
 
+test('medicine suggestions show the best verified price, nearby pickup and delivery',()=>{
+ const h=harness();h.context.medicineData={medicine:'atorvastatin',status:'prices_found',offers:[],sources:[],limitations:[],suggestions:{location:{label:'Philadelphia, PA 19103',state:'PA',source:'profile'},best:{kind:'delivery',title:'Mark Cuban Cost Plus Drugs',detail:'Ships by mail; confirm delivery to PA at checkout',url:'https://costplusdrugs.com/medications/x',price_known:true,offer:{price:6.3,currency:'USD'},confirmation:'Confirm at checkout.'},pickup:[{kind:'pickup',title:'CVS Pharmacy',detail:'0.3 mi away',url:'https://www.openstreetmap.org/node/1',price_known:false,pharmacy:{phone:'215-555-0100'},confirmation:'Call to ask.'}],delivery:[{kind:'delivery',title:'Amazon Pharmacy',detail:'Ships by mail',url:'javascript:alert(1)',price_known:false,confirmation:'Check online.'}],notes:['OSM note']}};
+ const html=h.run('medicineResults(medicineData)');assert.match(html,/Best verified price/);assert.match(html,/\$6\.30/);assert.match(html,/from your profile/);assert.match(html,/CVS Pharmacy/);assert.match(html,/Order for delivery/);assert.doesNotMatch(html,/javascript:/);
+});
 test('medicine search errors recover, and a response after sign-out is ignored',async()=>{
  const failed=medicineHarness(async()=>({job:{status:'failed',error:'No search service is configured.'}}));await failed.search();assert.equal(failed.submit.disabled,false);assert.equal(failed.nodes.get('#medicine-status').textContent,'No search service is configured.');
  let finish;const stale=medicineHarness(()=>new Promise(resolve=>{finish=resolve;}));const pending=stale.search();const signal=stale.calls[0].options.signal;stale.run('handleCloudIdentity(null)');assert.equal(signal.aborted,true);finish({job:{status:'completed',result:{medicine:'atorvastatin',status:'links_only',sources:['https://example.test/late']}}});await pending;assert.equal(stale.nodes.get('#medicine-results').innerHTML,'');

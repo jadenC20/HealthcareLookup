@@ -31,6 +31,7 @@ type MedicineSearchResult struct {
 	Offers      []MedicineSearchOffer `json:"offers"`
 	Sources     []string              `json:"sources"`
 	Limitations []string              `json:"limitations"`
+	Suggestions *Suggestions          `json:"suggestions,omitempty"`
 }
 
 type medicineSearchAI interface {
@@ -41,23 +42,37 @@ type medicineSearchAI interface {
 // Search finds public prices and links from a medicine name alone. It never
 // recommends a different medicine or infers insurance coverage or savings.
 func Search(w http.ResponseWriter, r *http.Request) {
-	searchWithMedicineAI(w, r, insurance.NewOpenAI())
+	searchWithMedicineAI(w, r, insurance.NewOpenAI(), evidence.PublicJSON)
 }
 
-func searchWithMedicineAI(w http.ResponseWriter, r *http.Request, ai medicineSearchAI) {
-	var request struct {
-		Medicine string `json:"medicine"`
-	}
+// MedicineSearchRequest is the body of POST /prescription-comparison/search.
+type MedicineSearchRequest struct {
+	Medicine string `json:"medicine"`
+	Location
+}
+
+func searchWithMedicineAI(w http.ResponseWriter, r *http.Request, ai medicineSearchAI, geo geoFetcher) {
+	var request MedicineSearchRequest
 	if evidence.Decode(r, &request) != nil {
 		evidence.JSON(w, 422, map[string]string{"detail": "Enter a medicine name, from 2 to 200 characters."})
 		return
 	}
 	request.Medicine = strings.TrimSpace(request.Medicine)
+	request.State = strings.ToUpper(strings.TrimSpace(request.State))
+	if request.ZIP != "" && !zipPattern.MatchString(request.ZIP) || request.State != "" && !statePattern.MatchString(request.State) || len(request.City) > 100 {
+		evidence.JSON(w, 422, map[string]string{"detail": "Use a 5-digit ZIP code, a city up to 100 characters and a two-letter state."})
+		return
+	}
 	if count := utf8.RuneCountInString(request.Medicine); count < 2 || count > 200 {
 		evidence.JSON(w, 422, map[string]string{"detail": "Enter a medicine name, from 2 to 200 characters."})
 		return
 	}
-	evidence.JSON(w, 200, searchMedicines(r.Context(), request.Medicine, ai))
+	result := searchMedicines(r.Context(), request.Medicine, ai)
+	if geo != nil {
+		suggestions := suggest(r.Context(), result, request.Location, geo)
+		result.Suggestions = &suggestions
+	}
+	evidence.JSON(w, 200, result)
 }
 
 func searchMedicines(ctx context.Context, medicine string, ai medicineSearchAI) MedicineSearchResult {

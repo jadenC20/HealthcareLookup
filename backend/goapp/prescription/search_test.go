@@ -55,7 +55,7 @@ func TestMedicineNameOnlySearchGroundsAndSortsRetrievedPrices(t *testing.T) {
 		},
 	}
 	w := httptest.NewRecorder()
-	searchWithMedicineAI(w, httptest.NewRequest("POST", "/prescription-comparison/search", strings.NewReader(`{"medicine":"metformin 500mg tablets"}`)), ai)
+	searchWithMedicineAI(w, httptest.NewRequest("POST", "/prescription-comparison/search", strings.NewReader(`{"medicine":"metformin 500mg tablets"}`)), ai, nil)
 	var result MedicineSearchResult
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 || result.Status != "prices_found" || len(result.Offers) != 2 || *result.Offers[0].Price != 8.5 {
 		t.Fatalf("medicine-only search failed: %d %s %v", w.Code, w.Body.String(), err)
@@ -128,10 +128,10 @@ func TestMedicineSearchHasUsefulEmptyAndUnavailableStates(t *testing.T) {
 }
 
 func TestMedicineSearchInputAndAmountValidation(t *testing.T) {
-	for _, body := range []string{`{}`, `{"medicine":"x"}`, `{"medicine":"` + strings.Repeat("x", 201) + `"}`, `{"medicine":"metformin","zip":"10001"}`, `{"medicine":true}`} {
+	for _, body := range []string{`{}`, `{"medicine":"x"}`, `{"medicine":"` + strings.Repeat("x", 201) + `"}`, `{"medicine":"metformin","zip":"1000"}`, `{"medicine":"metformin","state":"Penn"}`, `{"medicine":"metformin","pharmacy":"x"}`, `{"medicine":true}`} {
 		ai := &medicineSearchFixture{}
 		w := httptest.NewRecorder()
-		searchWithMedicineAI(w, httptest.NewRequest("POST", "/prescription-comparison/search", strings.NewReader(body)), ai)
+		searchWithMedicineAI(w, httptest.NewRequest("POST", "/prescription-comparison/search", strings.NewReader(body)), ai, nil)
 		if w.Code != 422 || ai.searchCalls != 0 {
 			t.Fatalf("invalid simple-search request reached AI: %q", body)
 		}
@@ -167,5 +167,46 @@ func TestMedicineSearchSeparatesRequestedPackCountFromProductStrength(t *testing
 	product, pack, ambiguous := medicineProductAndPack("metformin 500 mg tablets")
 	if product != "metformin 500 mg tablets" || pack != nil || ambiguous {
 		t.Fatal("dose strength was interpreted as a package count")
+	}
+}
+
+func TestMedicineSuggestionsPairOffersWithNearbyStoresAndDelivery(t *testing.T) {
+	price := func(v float64) *float64 { return &v }
+	result := MedicineSearchResult{Offers: []MedicineSearchOffer{
+		{Medicine: "atorvastatin 20 mg", Pharmacy: "CVS Pharmacy", Price: price(14.5), Currency: "USD", SourceURL: "https://www.goodrx.com/atorvastatin"},
+		{Medicine: "atorvastatin 20 mg", Pharmacy: "", Price: price(6.3), Currency: "USD", SourceURL: "https://costplusdrugs.com/medications/atorvastatin"},
+		{Medicine: "atorvastatin 20 mg", Pharmacy: "Walgreens", Price: nil, SourceURL: "https://www.walgreens.com/rx/atorvastatin"},
+	}}
+	geo := func(_ context.Context, u string, dest any) error {
+		switch {
+		case strings.HasPrefix(u, "https://api.zippopotam.us/us/19103"):
+			return json.Unmarshal([]byte(`{"post code":"19103","places":[{"place name":"Philadelphia","state abbreviation":"PA","latitude":"39.9529","longitude":"-75.1741"}]}`), dest)
+		case strings.HasPrefix(u, "https://overpass-api.de/"):
+			return json.Unmarshal([]byte(`{"elements":[
+				{"type":"node","id":1,"lat":39.955,"lon":-75.170,"tags":{"amenity":"pharmacy","name":"CVS Pharmacy","brand":"CVS Pharmacy","addr:housenumber":"1826","addr:street":"Chestnut St"}},
+				{"type":"node","id":2,"lat":39.960,"lon":-75.180,"tags":{"amenity":"pharmacy","name":"Walgreens"}},
+				{"type":"way","id":3,"center":{"lat":39.950,"lon":-75.160},"tags":{"amenity":"pharmacy","name":"Independent Rx"}}]}`), dest)
+		}
+		return errors.New("unexpected " + u)
+	}
+	s := suggest(context.Background(), result, Location{ZIP: "19103", Source: "profile"}, geo)
+	if s.Location == nil || s.Location.State != "PA" || s.Location.Source != "profile" || len(s.NearbyPharmacies) != 3 {
+		t.Fatalf("location not resolved: %+v", s)
+	}
+	if len(s.Pickup) != 3 || s.Pickup[0].Title != "CVS Pharmacy" || !s.Pickup[0].PriceKnown || s.Pickup[1].PriceKnown {
+		t.Fatalf("pickup should lead with the priced nearby chain: %+v", s.Pickup)
+	}
+	if len(s.Delivery) != 2 || s.Delivery[0].Title != "Mark Cuban Cost Plus Drugs" || !s.Delivery[0].PriceKnown || !strings.Contains(s.Delivery[0].Detail, "PA") {
+		t.Fatalf("delivery suggestions wrong: %+v", s.Delivery)
+	}
+	if s.Best == nil || *s.Best.Offer.Price != 6.3 || s.Best.Kind != "delivery" {
+		t.Fatalf("best should be the cheapest verified price: %+v", s.Best)
+	}
+	none := suggest(context.Background(), result, Location{}, geo)
+	if none.Location != nil || len(none.Pickup) != 0 || len(none.Delivery) != 2 || !strings.Contains(none.Notes[0], "profile") {
+		t.Fatalf("missing location should still offer delivery and ask for a location: %+v", none)
+	}
+	if city, state := splitCityState("Philadelphia, PA", ""); city != "Philadelphia" || state != "PA" {
+		t.Fatal("city, state not split")
 	}
 }

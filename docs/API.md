@@ -118,7 +118,7 @@ These routes require the session cookie. POST/PUT/DELETE also require `X-CSRF-To
 | POST /care-search/recommend | Preferences or `{}` to use the saved profile; returns ranked candidates and public research |
 | GET /prescription-comparison/drugs?name=... | RxNorm lookup; select an exact clinical/branded product |
 | POST /prescription-comparison/compare | Exact RxCUI, quantity, ZIP and price type comparison |
-| POST /prescription-comparison/search | JSON `medicine` name only; automatic source-backed price search returning a job handle |
+| POST /prescription-comparison/search | JSON `medicine` plus optional `zip`, `city`, `state`, `latitude`, `longitude`, `radius_miles` (1–25, default 5), `delivery` (default true). Without a location the saved preferences city/state, then the profile city, are used. The result adds `suggestions`: `location`, `nearby_pharmacies` (OpenStreetMap), `pickup` (nearby stores matched to published chain prices), `delivery` (mail-order pharmacies) and `best` (cheapest verified price). |
 | GET /jobs?limit=25&cursor=... | Paginated current-user jobs |
 | GET /jobs/{id} | Job progress, error, saved result ID and completed result |
 | DELETE /jobs/{id} | Cancel a queued/running job |

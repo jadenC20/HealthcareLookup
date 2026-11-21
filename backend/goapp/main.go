@@ -57,7 +57,7 @@ func main() {
 	mux.HandleFunc("GET /care/search", accounts.SearchCare)
 	mux.HandleFunc("GET /prescription-comparison/drugs", accounts.Protected(false, prescription.Drugs))
 	mux.HandleFunc("POST /prescription-comparison/compare", accounts.AsyncFeature("prescription_comparison", prescription.Compare, false, true))
-	mux.HandleFunc("POST /prescription-comparison/search", accounts.AsyncFeature("prescription_search", prescription.Search, false, true))
+	mux.HandleFunc("POST /prescription-comparison/search", accounts.AsyncFeature("prescription_search", accounts.MedicineSearch(prescription.Search), false, true))
 	mux.HandleFunc("GET /jobs", accounts.Jobs)
 	mux.HandleFunc("GET /jobs/{id}", accounts.Jobs)
 	mux.HandleFunc("DELETE /jobs/{id}", accounts.Jobs)
