@@ -15,6 +15,7 @@ type Line struct {
 	Code        string  `json:"code"`
 	Quantity    int     `json:"quantity"`
 	Charge      float64 `json:"charge"`
+	Page        *int    `json:"page,omitempty"`
 	Billed      float64 `json:"billed"`
 	Paid        float64 `json:"plan_paid"`
 	Adjustment  float64 `json:"adjustment"`
