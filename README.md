@@ -1,56 +1,47 @@
-# ClearCare
+# ClearCare — Terra frontend
 
-Local frontend and FastAPI backend for HealthcareLookup. Documents are processed on this machine; no cloud extraction or AI service is used.
+The `codex/clearcare-frontend` branch contains the four-screen frontend rebuilt from `FrontendWeb.zip`: Overview, Understand My Bill, Find Affordable Care, and Prescription Savings.
 
-## Run
+## Preview
 
-Requires Node.js 20+, Python 3.10+, and a local Python virtual environment.
+Requires Node.js 20 or newer. The generated CSS, fonts, icons, and page templates are committed, so a preview needs no dependency installation:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements-lock.txt
-npm ci
-node backend/setup-ocr.mjs
-npm run dev -- --demo
+npm run dev
 ```
 
-On macOS/Linux use `.venv/bin/python` for pip. The OCR setup downloads the English model once; document processing then works locally. Native Tesseract is optional (set `TESSERACT_CMD`); the Node/WASM fallback works without a system installation.
+Open http://127.0.0.1:4180. Set `PORT` to use another local port. The server listens only on loopback and serves an explicit asset allowlist. No backend process is started, and no `/api` requests are made.
 
-Open http://127.0.0.1:4173. FastAPI runs on port 8000; the frontend proxies `/api` to it, including session cookies. Use `npm run dev` without `--demo` to load your own `backend/data/providers.csv` and `backend/data/service_prices.csv`. Demo mode uses explicitly fictional reference prices. Do not run a second server on the same ports.
+## Edit and build
 
-Checks: `npm run check` and `.\.venv\Scripts\python.exe -m pytest backend/tests -q`. All tests use temporary databases. `requirements-lock.txt` records the tested Python dependencies.
+```powershell
+npm ci
+npm run build
+npm run check
+```
 
-## Implemented
+The design uses the supplied Terra palette, Nunito Sans body text, Literata overview headlines, and locally bundled Material Symbols. There is no runtime Tailwind CDN or remote font dependency.
 
-- Responsive overview and navigation.
-- Local PDF/PNG/JPEG extraction with text PDFs and OCR for scans, 10 MB/file, 12 pages/PDF, and 20 megapixel images. Extracted bill suggestions are best-effort. EOB line columns require manual confirmation. A user must review editable fields before analysis.
-- API-backed bill checks, findings, and inquiry drafts; original files are discarded after processing.
-- Account registration, sign in/out, profile editing, private saved reviews, record deletion, and account deletion. Passwords use scrypt; sessions are hashed server-side and expire after 12 hours. Mutations require CSRF tokens; authentication attempts are throttled.
-- PDF export of the current review, saved review, or profile plus all saved reviews. No CSV/JSON export UI.
-- API-backed provider directory and procedure price comparisons with provenance and warnings. Medication pricing is not connected and is shown as unavailable.
-- Keyboard focus indicators and native dialog behavior.
+## Frontend interactions
 
-## Data and integration boundaries
+- Hash navigation across all four screens, with active states and browser back/forward support.
+- Procedure/provider search, sample ZIP filtering, category empty states, and cash/plan price toggles.
+- Provider detail dialogs, an illustrative local map, benefits, search, and notification dialogs.
+- Prescription filtering, dosage selection, a non-redeemable coupon preview, and eligibility information.
+- Local PDF/PNG/JPEG file selection and drop handling, including size/type validation. Files are not read, uploaded, or analyzed.
+- Editable sample billing inquiry, text download, and browser Print / Save PDF.
+- Demo profile display-name editing for the current browser session only.
 
-The sample bill and demo CSVs are fictional. With custom CSVs the UI shows their source, retrieval date, and demo markers. No insurance coverage verification or medication pricing feed is connected. Extraction is local OCR and conservative pattern matching, not an AI model. The reviewed fields drive deterministic analysis. Do not commit real patient documents, database files, or credentials.
+All figures, listings, plan information, reviews, and savings are illustrative. A sample review is never generated from a selected file. Booking and advocacy actions do not send requests. Compliance and live insurer-connection claims from the reference have been replaced with explicit preview labels.
 
-Saved data resides in `backend/clearcare.db` (override with `CLEARCARE_DB`). No health data is stored in browser localStorage. Original uploads and full OCR text are not retained. Exports include reviewed line items and evidence, not original documents. Account PDF exports support western text; unsupported glyphs are replaced with `?` in this prototype.
+## Files
 
-This is a loopback-only hackathon application, not a production patient portal. Database contents are not application-encrypted. There is no email verification, password recovery, or multi-device account service. Public deployment requires HTTPS, `CLEARCARE_SECURE_COOKIES=1`, an explicit production-origin policy, protected storage/backups, operational review, and an account-recovery design. Do not expose these local development servers publicly.
+- `index.html`: shared application shell and accessible dialogs
+- `pages/`: four HTML screen templates adapted from the supplied reference
+- `app.js`: frontend-only navigation and interactions
+- `styles/input.css`, `tailwind.config.cjs`: design tokens, responsive styles, and Tailwind source
+- `styles.css`: generated CSS for the dependency-free preview
+- `assets/`: local fonts, icons, licenses, and illustrative map
+- `server.mjs`: frontend static server
 
-## Project layout
-
-- `index.html`: application shell and navigation
-- `styles.css`: responsive design system
-- `app.js`: views, fictional datasets, and browser interactions
-- `integration.js`: API-backed screens, account forms, extraction editor, saved records, PDF downloads
-- `server.mjs`: loopback-only static server and backend proxy
-- `dev.mjs`: starts frontend and backend together
-- `backend/bill_review/`: bill extraction, analysis, saved reviews, and reports
-- `backend/care_search/`: provider and price APIs and CSV loading
-- `backend/account/`: accounts, sessions, profile, and account export
-- `backend/main.py` and `backend/database.py`: application composition and shared SQLite storage
-- `backend/tests/`: backend tests
-- `ARCHITECTURE.md`: frontend and backend graphs and data flows
-
-No external fonts, analytics, or cloud document services are used. The one-time package/model installation needs internet access.
+The existing backend source, `dev.mjs`, and historical `integration.js` are retained for future integration but are not loaded by this frontend. See `backend/README.md` for the existing backend documentation. This change intentionally does not connect or modify backend behavior.

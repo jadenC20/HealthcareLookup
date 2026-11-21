@@ -1,0 +1,280 @@
+<div class="flex flex-col w-full">
+<div class="px-8 py-8 max-w-[1440px] w-full mx-auto">
+<!-- 12-Column Workspace Split -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+<!-- Main Column (8 Columns) -->
+<div class="lg:col-span-8 flex flex-col gap-6 min-w-0">
+<!-- Header Section -->
+<div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+<div class="flex flex-col gap-1 min-w-0">
+<span class="text-xs font-bold text-primary uppercase tracking-wider">01 / Bill Intelligence</span>
+<h1 class="font-headline font-bold text-2xl sm:text-3xl text-on-surface tracking-tight">Understand my bill</h1>
+<p class="text-sm text-on-surface-variant">Upload an itemized statement or EOB to decode medical codes and flag overcharges.</p>
+</div>
+<button class="inline-flex items-center gap-2 bg-primary text-on-primary px-5 py-2.5 rounded-full font-bold text-sm shadow-sm hover:bg-primary/90 hover:scale-[1.01] transition-all shrink-0 cursor-pointer" id="upload-cta-btn" type="button">
+<span class="material-symbols-outlined text-[20px]">upload_file</span>
+<span>Upload New Bill</span>
+</button>
+</div>
+<!-- Drag-and-Drop / Quick Intake Card -->
+<div class="relative overflow-hidden bg-surface-container-lowest rounded-xl p-5 border border-outline-variant/40 shadow-xs transition-all hover:shadow-sm group cursor-pointer" id="dropzone-card">
+<div class="absolute -right-12 -top-12 w-48 h-48 rounded-full bg-primary-fixed/20 blur-2xl pointer-events-none"></div>
+<div class="relative bg-surface-container-low rounded-xl p-5 flex flex-col md:flex-row items-center justify-between gap-6 border border-outline-variant/30">
+<div class="flex items-center gap-4 min-w-0">
+<div class="w-12 h-12 rounded-xl bg-primary-fixed text-primary flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform shadow-xs">
+<span class="material-symbols-outlined text-[26px]">cloud_upload</span>
+</div>
+<div class="flex flex-col gap-0.5 min-w-0">
+<span class="font-headline font-bold text-base text-on-surface truncate">Drop your PDF, PNG, or JPG statement here</span>
+<span class="text-xs text-on-surface-variant">Instant CPT &amp; HCPCS code decoding • Frontend demonstration</span>
+</div>
+</div>
+<div class="flex items-center gap-3 shrink-0">
+<button class="inline-flex items-center gap-2 bg-surface-container-lowest text-primary px-4 py-2 rounded-full font-bold text-xs border border-outline-variant/50 shadow-xs hover:bg-surface-container transition-colors cursor-pointer" id="sample-bill-btn" type="button">
+<span class="material-symbols-outlined text-[16px] text-primary">science</span>
+<span>Try Sample Inpatient Bill</span>
+</button>
+</div>
+</div>
+<input accept=".pdf,.png,.jpg,.jpeg" class="hidden" id="file-input" type="file"/>
+</div>
+<!-- Active Bill Audit Breakdown -->
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant/40 shadow-xs overflow-hidden flex flex-col">
+<!-- Audit Header -->
+<div class="p-6 bg-primary text-on-primary flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative overflow-hidden">
+<div class="absolute right-0 top-0 w-64 h-64 rounded-full bg-primary-container/30 blur-3xl pointer-events-none"></div>
+<div class="relative flex flex-col gap-1 min-w-0">
+<div class="inline-flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary-fixed"></span>
+<span class="text-xs font-bold text-primary-fixed uppercase tracking-wider">Active Audit • 2 Issues Flagged</span>
+</div>
+<h2 class="font-headline font-bold text-lg sm:text-xl text-on-primary truncate">St. Jude Regional Medical Pavilion • Account #AR-98102</h2>
+</div>
+<div class="relative inline-flex items-center gap-2 bg-on-primary/15 px-3.5 py-1.5 rounded-full self-start sm:self-auto shrink-0 border border-on-primary/20">
+<span class="material-symbols-outlined text-[16px] text-primary-fixed">verified_user</span>
+<span class="text-xs font-bold text-on-primary">Sample bill review</span>
+</div>
+</div>
+<!-- Summary Bar -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 p-5 bg-surface-container-low border-b border-outline-variant/30">
+<div class="bg-surface-container-lowest rounded-xl p-4 border border-outline-variant/40 shadow-xs flex flex-col gap-1">
+<span class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Total Billed</span>
+<span class="font-headline font-bold text-2xl text-on-surface">$340.00</span>
+<span class="text-xs text-on-surface-variant">4 itemized line items</span>
+</div>
+<div class="bg-surface-container-lowest rounded-xl p-4 border border-outline-variant/40 shadow-xs flex flex-col gap-1">
+<span class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Sample comparison</span>
+<span class="font-headline font-bold text-2xl text-primary">$255.00</span>
+<span class="text-xs text-on-surface-variant">Medicare + regional benchmark</span>
+</div>
+<div class="bg-primary-fixed/40 rounded-xl p-4 border border-primary/20 shadow-xs flex flex-col gap-1">
+<span class="text-xs font-bold text-on-primary-fixed-variant uppercase tracking-wider">Potential Savings</span>
+<div class="flex items-baseline gap-2">
+<span class="font-headline font-bold text-2xl text-primary">-$85.00</span>
+<span class="text-xs font-bold bg-primary text-on-primary px-2 py-0.5 rounded-full">25%</span>
+</div>
+<span class="text-xs font-semibold text-on-primary-fixed-variant">Illustrative review difference</span>
+</div>
+</div>
+<!-- Itemized CPT Line-Item Table -->
+<div class="p-6 flex flex-col gap-3">
+<div class="flex items-center justify-between mb-1">
+<span class="text-sm font-bold text-on-surface">Itemized CPT Line-Item Breakdown</span>
+<span class="text-xs text-on-surface-variant">Sorted by audit priority</span>
+</div>
+<!-- Row 1 -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-surface-container-low/70 border border-outline-variant/30 hover:bg-surface-container-low transition-colors">
+<div class="flex items-start sm:items-center gap-3.5 min-w-0">
+<div class="w-9 h-9 rounded-xl bg-surface-container-lowest text-primary border border-outline-variant/40 flex items-center justify-center shrink-0 shadow-xs">
+<span class="material-symbols-outlined text-[18px]">medical_information</span>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-2">
+<span class="text-xs font-bold text-primary">CPT 99204</span>
+<span class="text-xs text-on-surface-variant">•</span>
+<span class="text-sm font-bold text-on-surface truncate">Level 4 Office Visit</span>
+</div>
+<span class="text-xs text-on-surface-variant">Outpatient evaluation &amp; management, 45 min</span>
+</div>
+</div>
+<div class="flex items-center justify-between sm:justify-end gap-4 shrink-0">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary-fixed/50 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                  Sample line item
+                </span>
+<span class="font-headline font-bold text-base text-on-surface w-20 text-right">$180.00</span>
+</div>
+</div>
+<!-- Row 2 (Flagged) -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-error-container/30 border border-error/20 hover:bg-error-container/40 transition-colors">
+<div class="flex items-start sm:items-center gap-3.5 min-w-0">
+<div class="w-9 h-9 rounded-xl bg-error-container text-error flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[18px]">warning</span>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-2">
+<span class="text-xs font-bold text-error">CPT 80053</span>
+<span class="text-xs text-on-surface-variant">•</span>
+<span class="text-sm font-bold text-on-surface truncate">Comprehensive Metabolic Panel</span>
+</div>
+<span class="text-xs font-medium text-error">Bundled lab components billed separately</span>
+</div>
+</div>
+<div class="flex items-center justify-between sm:justify-end gap-4 shrink-0">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-error-container text-error font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">flag</span>
+                  Flagged: Unbundled Lab Fee (-$50.00)
+                </span>
+<span class="font-headline font-bold text-base text-on-surface w-20 text-right">$85.00</span>
+</div>
+</div>
+<!-- Row 3 (Flagged) -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-error-container/30 border border-error/20 hover:bg-error-container/40 transition-colors">
+<div class="flex items-start sm:items-center gap-3.5 min-w-0">
+<div class="w-9 h-9 rounded-xl bg-error-container text-error flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[18px]">content_copy</span>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-2">
+<span class="text-xs font-bold text-error">CPT 36415</span>
+<span class="text-xs text-on-surface-variant">•</span>
+<span class="text-sm font-bold text-on-surface truncate">Routine Venipuncture</span>
+</div>
+<span class="text-xs font-medium text-error">Identical blood draw billed twice on same DOS</span>
+</div>
+</div>
+<div class="flex items-center justify-between sm:justify-end gap-4 shrink-0">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-error-container text-error font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]">flag</span>
+                  Flagged: Duplicate Charge (-$35.00)
+                </span>
+<span class="font-headline font-bold text-base text-on-surface w-20 text-right">$35.00</span>
+</div>
+</div>
+<!-- Row 4 -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-surface-container-low/70 border border-outline-variant/30 hover:bg-surface-container-low transition-colors">
+<div class="flex items-start sm:items-center gap-3.5 min-w-0">
+<div class="w-9 h-9 rounded-xl bg-surface-container-lowest text-primary border border-outline-variant/40 flex items-center justify-center shrink-0 shadow-xs">
+<span class="material-symbols-outlined text-[18px]">local_hospital</span>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-2">
+<span class="text-xs font-bold text-primary">Facility</span>
+<span class="text-xs text-on-surface-variant">•</span>
+<span class="text-sm font-bold text-on-surface truncate">Room &amp; Facility Fee</span>
+</div>
+<span class="text-xs text-on-surface-variant">Standard outpatient clinic overhead</span>
+</div>
+</div>
+<div class="flex items-center justify-between sm:justify-end gap-4 shrink-0">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary-fixed/50 text-primary font-bold text-xs">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                  Sample line item
+                </span>
+<span class="font-headline font-bold text-base text-on-surface w-20 text-right">$40.00</span>
+</div>
+</div>
+</div>
+<!-- Action Bar -->
+<div class="px-6 py-4 bg-surface-container-low border-t border-outline-variant/30 flex flex-col sm:flex-row items-center justify-between gap-4">
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px] text-primary">gavel</span>
+<span class="text-xs font-semibold">Ready to dispute? We pre-filled your CPT citations.</span>
+</div>
+<div class="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
+<button class="inline-flex items-center gap-2 bg-surface-container-lowest text-primary px-5 py-2.5 rounded-full font-bold text-xs border border-outline-variant/40 shadow-xs hover:bg-surface-container transition-colors cursor-pointer" id="advocate-btn" type="button">
+<span class="material-symbols-outlined text-[18px]">support_agent</span>
+<span>Request Advocate Review</span>
+</button>
+<button class="inline-flex items-center gap-2 bg-primary text-on-primary px-5 py-2.5 rounded-full font-bold text-xs shadow-xs hover:bg-primary/90 transition-colors cursor-pointer" id="dispute-btn" type="button">
+<span class="material-symbols-outlined text-[18px]">description</span>
+<span>Download Dispute Letter</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Rail (4 Columns) -->
+<div class="lg:col-span-4 flex flex-col gap-6 min-w-0">
+<!-- Deductible & Out-of-Pocket Meter -->
+<div class="bg-surface-container-lowest rounded-xl p-6 border border-outline-variant/40 shadow-xs flex flex-col gap-5">
+<div class="flex items-center justify-between">
+<div class="flex flex-col gap-0.5">
+<span class="text-xs font-bold text-primary uppercase tracking-wider">Plan Progress</span>
+<h3 class="font-headline font-bold text-lg text-on-surface">Deductible &amp; Out-of-Pocket</h3>
+</div>
+<div class="w-10 h-10 rounded-xl bg-primary-fixed/40 text-primary flex items-center justify-center shrink-0 border border-primary/20">
+<span class="material-symbols-outlined text-[20px]">shield</span>
+</div>
+</div>
+<!-- Progress Ring + Readout -->
+<div class="flex items-center gap-5 bg-surface-container-low rounded-xl p-4 border border-outline-variant/30">
+<div class="relative w-20 h-20 shrink-0 flex items-center justify-center">
+<svg class="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+<circle class="text-surface-container-highest" cx="40" cy="40" fill="none" r="32" stroke="currentColor" stroke-width="8"></circle>
+<circle class="text-primary" cx="40" cy="40" fill="none" r="32" stroke="currentColor" stroke-dasharray="201.06" stroke-dashoffset="77.2" stroke-linecap="round" stroke-width="8"></circle>
+</svg>
+<span class="absolute font-headline font-bold text-sm text-primary">61.6%</span>
+</div>
+<div class="flex flex-col gap-1 min-w-0">
+<span class="font-headline font-bold text-base text-on-surface">$1,850 <span class="text-xs font-normal text-on-surface-variant">of $3,000 met</span></span>
+<span class="text-xs text-on-surface-variant truncate">BlueCross Shield Direct</span>
+<span class="inline-flex items-center gap-1 text-xs font-bold text-primary mt-0.5">
+<span class="material-symbols-outlined text-[14px]">trending_up</span>
+                $1,150 remaining
+              </span>
+</div>
+</div>
+<div class="w-full bg-surface-container-high rounded-full h-2 overflow-hidden">
+<div class="bg-primary h-2 rounded-full transition-all duration-700" style="width: 61.6%"></div>
+</div>
+</div>
+<!-- Common Billing Errors Guide Card -->
+<div class="bg-surface-container-lowest rounded-xl p-6 border border-outline-variant/40 shadow-xs flex flex-col gap-5">
+<div class="flex flex-col gap-1">
+<span class="text-xs font-bold text-primary uppercase tracking-wider">Knowledge Base</span>
+<h3 class="font-headline font-bold text-lg text-on-surface">Common Billing Errors Guide</h3>
+<p class="text-xs text-on-surface-variant">What our clinical audit engine checks on every statement.</p>
+</div>
+<div class="flex flex-col gap-3">
+<!-- Error 1 -->
+<div class="p-3.5 rounded-xl bg-surface-container-low border border-outline-variant/30 flex items-start gap-3">
+<div class="w-8 h-8 rounded-xl bg-error-container text-error flex items-center justify-center shrink-0 mt-0.5">
+<span class="material-symbols-outlined text-[18px]">content_copy</span>
+</div>
+<div class="flex flex-col gap-0.5 min-w-0">
+<span class="text-xs font-bold text-on-surface">Duplicate charges</span>
+<span class="text-xs text-on-surface-variant leading-relaxed">Same procedure, medication, or lab draw billed more than once on the same date of service.</span>
+</div>
+</div>
+<!-- Error 2 -->
+<div class="p-3.5 rounded-xl bg-surface-container-low border border-outline-variant/30 flex items-start gap-3">
+<div class="w-8 h-8 rounded-xl bg-primary-fixed text-primary flex items-center justify-center shrink-0 mt-0.5">
+<span class="material-symbols-outlined text-[18px]">layers</span>
+</div>
+<div class="flex flex-col gap-0.5 min-w-0">
+<span class="text-xs font-bold text-on-surface">Unbundled CPT codes</span>
+<span class="text-xs text-on-surface-variant leading-relaxed">Procedures that should be billed under a single comprehensive code split into separate fees.</span>
+</div>
+</div>
+<!-- Error 3 -->
+<div class="p-3.5 rounded-xl bg-surface-container-low border border-outline-variant/30 flex items-start gap-3">
+<div class="w-8 h-8 rounded-xl bg-secondary-container text-secondary flex items-center justify-center shrink-0 mt-0.5">
+<span class="material-symbols-outlined text-[18px]">account_balance</span>
+</div>
+<div class="flex flex-col gap-0.5 min-w-0">
+<span class="text-xs font-bold text-on-surface">Out-of-network balance billing</span>
+<span class="text-xs text-on-surface-variant leading-relaxed">Surprise bills from out-of-network specialists at an in-network hospital, protected under the No Surprises Act.</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Subtle Toast Notification -->
+<div class="fixed bottom-6 right-6 z-50 hidden items-center gap-3 bg-inverse-surface text-inverse-on-surface px-5 py-3 rounded-xl shadow-lg transition-all border border-outline-variant/30" id="toast-banner">
+<span class="material-symbols-outlined text-[20px] text-primary-fixed">check_circle</span>
+<span class="text-xs font-bold" id="toast-message">Action completed</span>
+</div>
+</div>
