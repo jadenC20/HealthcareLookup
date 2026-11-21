@@ -143,6 +143,21 @@ test('SBC discovery keeps looking past landing pages and prioritizes a retrieved
  assert.equal(calls,2);assert.deepEqual(part.annotations.map(row=>row.url),['https://insurer.example/plan.pdf','https://insurer.example/documents']);
 });
 
+test('medicine price search keeps looking past drug facts and prioritizes a retrieved pharmacy price page',async t=>{
+ const originalFetch=globalThis.fetch,queries=[];t.after(()=>{globalThis.fetch=originalFetch;});
+ globalThis.fetch=async url=>{queries.push(url);return url.includes('bing.com')?new Response('<rss><channel><item><title>Metformin uses and side effects</title><link>https://www.drugs.com/metformin.html</link><description>Drug information and precautions.</description></item><item><title>Metformin oral route</title><link>https://www.mayoclinic.org/drugs-supplements/metformin-oral-route/description/drg-20067074</link><description>Medical information.</description></item></channel></rss>'):new Response('<a class="result__a" href="https://www.goodrx.com/metformin">Metformin prices and coupons</a><a class="result__snippet">Compare cash pharmacy prices and coupon restrictions.</a>');};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'See https://www.goodrx.com/metformin'})}};
+ const response=await worker.fetch(request({input:'metformin pharmacy cash prices coupons',tools:[{type:'web_search'}]}),env);assert.equal(response.status,200);const data=await response.json();
+ assert.equal(queries.length,2);assert.ok(queries[1].startsWith('https://html.duckduckgo.com/html/'));assert.equal(data.search_results[0].url,'https://www.goodrx.com/metformin');assert.equal(data.search_results[1].url,'https://www.drugs.com/metformin.html');assert.equal(data.search_diagnostics[1].result_count,1);
+});
+
+test('medicine price search distinguishes Drugs.com facts from its actual price-guide path',async t=>{
+ const originalFetch=globalThis.fetch;let calls=0;t.after(()=>{globalThis.fetch=originalFetch;});
+ globalThis.fetch=async()=>{calls++;return new Response('<rss><channel><item><title>Metformin drug information</title><link>https://www.drugs.com/metformin.html</link><description>Uses and precautions.</description></item><item><title>Metformin prices</title><link>https://www.drugs.com/price-guide/metformin</link><description>Published prices, coupons and limitations.</description></item></channel></rss>');};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'See https://www.drugs.com/price-guide/metformin'})}};
+ const response=await worker.fetch(request({input:'metformin medicine prices',tools:[{type:'web_search'}]}),env);const data=await response.json();assert.equal(calls,1);assert.equal(data.search_results[0].url,'https://www.drugs.com/price-guide/metformin');
+});
+
 test('failed search still runs AI and never fabricates source citations',async t=>{
  const originalFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=originalFetch;});globalThis.fetch=async()=>new Response('Unavailable',{status:503});let calls=0;
  const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async(_,options)=>{calls++;assert.match(options.messages.at(-1).content,/No search sources/);return {response:'No supported sources were found.'};}}};

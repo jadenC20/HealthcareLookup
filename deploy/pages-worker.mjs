@@ -53,6 +53,21 @@ function parsedSearchResults(document,base){
  return results;
 }
 const searchHosts=new Set(['bing.com','www.bing.com','duckduckgo.com','www.duckduckgo.com','html.duckduckgo.com','lite.duckduckgo.com']);
+function medicinePriceSource(result){
+ try{
+  const url=new URL(result.url),host=url.hostname.replace(/^www\./,''),path=url.pathname;
+  if(host==='drugs.com')return /^\/price-guide\//i.test(path);
+  if(host==='goodrx.com')return path!=='/'&&!/^\/(?:health|conditions|drugs|insurance|corporate|well-being)(?:\/|$)/i.test(path);
+  if(host==='singlecare.com')return /^\/prescription\//i.test(path);
+  if(host==='costplusdrugs.com')return /^\/medications(?:\/|$)/i.test(path);
+  if(host==='pharmacy.amazon.com')return !/^\/(?:help|faq|privacy|terms)(?:\/|$)/i.test(path);
+  if(host==='rxsaver.com')return /^\/(?:drugs|prices)(?:\/|$)/i.test(path);
+  if(host==='walmart.com')return /(?:pharmacy|prescription|drug-price)/i.test(path)&&!/^\/account\//i.test(path);
+  if(host==='cvs.com'||host==='walgreens.com')return /(?:pharmacy|prescription|rx-drug|drug-info|\/drug\/|coupon)/i.test(path)&&!/(?:login|sign-?in)/i.test(path);
+  const text=result.title+' '+result.excerpt;
+  return (/(?:^|\/)(?:prices?|price-guide|coupons?|pharmacy)(?:\/|$)/i.test(path)||/\b(?:pharmacy|cash|retail|coupon|prices?)\b/i.test(text))&&/\$\s*\d|\b(?:cash|retail|coupon)\s+prices?\b/i.test(text);
+ }catch{return false;}
+}
 async function searchDocument(initialURL,timeoutMs){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
  try{
@@ -81,6 +96,7 @@ async function publicSearch(input,instructions){
  query=query.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,400);relaxed=relaxed.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,300)||query;
  if(!query)return {results:[],diagnostics:[{engine:'none',http_status:0,result_count:0,error_kind:'invalid_input'}]};
  const sbc=/Summary of Benefits and Coverage/i.test(instructions);
+ const medicinePrices=!sbc&&/\b(?:pharmac(?:y|ies)|coupons?|(?:drug|medicine|medication|prescription)\s+(?:cash\s+)?prices?|cash\s+prices?)\b/i.test(query);
  const exact=sbc?query+' "Summary of Benefits and Coverage" filetype:pdf':query;
  const broad=sbc?relaxed+' SBC benefits coverage PDF':query;
  const attempts=[['bing_rss','https://www.bing.com/search?format=rss&q=',exact],['duckduckgo_html','https://html.duckduckgo.com/html/?q=',broad],['duckduckgo_lite','https://lite.duckduckgo.com/lite/?q=',broad]];
@@ -96,10 +112,11 @@ async function publicSearch(input,instructions){
    diagnostic.result_count=parsed.length;
    if(!parsed.length)diagnostic.error_kind=/captcha|anomaly|challenge-form|unusual traffic|verify.{0,30}human|bots use duckduckgo/i.test(document)?'challenge':'no_results';
    for(const result of parsed)if(!seen.has(result.url)){seen.add(result.url);results.push(result);}
-   if(results.length&&(!sbc||results.some(result=>/\.pdf(?:[?#]|$)/i.test(result.url))))break;
+   if(results.length&&(sbc?results.some(result=>/\.pdf(?:[?#]|$)/i.test(result.url)):medicinePrices?results.some(medicinePriceSource):true))break;
   }catch(error){diagnostic.http_status=error.searchStatus||diagnostic.http_status;diagnostic.error_kind=error.searchErrorKind||(error.status===413?'response_too_large':['TimeoutError','AbortError'].includes(error.name)?'timeout':'network_error');diagnostic.error_name=['AbortError','TimeoutError','TypeError','RangeError','ReferenceError','Error'].includes(error.name)?error.name:'OtherError';}
  }
  if(sbc)results.sort((a,b)=>Number(/\.pdf(?:[?#]|$)/i.test(b.url))-Number(/\.pdf(?:[?#]|$)/i.test(a.url)));
+ if(medicinePrices)results.sort((a,b)=>Number(medicinePriceSource(b))-Number(medicinePriceSource(a)));
  return {results:results.slice(0,8),diagnostics};
 }
 function pdfPages(text){
