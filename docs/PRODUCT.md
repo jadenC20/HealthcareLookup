@@ -1,47 +1,41 @@
 # Product specification
 
-This document records the user's product vision. It is not a claim that every feature is implemented. The implementation matrix in the [root README](../README.md) is authoritative for current functionality.
+## Bill Review
 
-## Three product features
+Upload a PDF, photograph or screenshot of a bill, invoice or receipt, with an optional EOB beside it. OpenAI extracts only supported fields and line evidence. Missing monetary values remain null. Users confirm fields before submitting monetary analysis. Bill totals and EOB reconciliation remain deterministic.
 
-### 1. Bill Review
+Price estimates compare confirmed charge totals against applicable imported references. Match procedure code, service date, state, setting, facility and payer/plan as required. Medicare benchmarks, negotiated rates and cash prices retain distinct labels. An over/under-benchmark difference is not a refund or determination of patient liability. NCCI matches flag code pairs for review, preserving modifier/context uncertainty. The AI explains existing evidence and searches public sources; it cannot supply invented benchmark amounts.
 
-The user uploads a PDF, photograph, or screenshot of a medical bill, invoice, or receipt. An EOB (Explanation of Benefits) is an optional upload beside the bill, associated with that review rather than a permanent profile document. AI should read messy documents, explain charges, and help the user identify questionable billing or pricing.
+Saved results are private. Separate charge observations contain facility NPI, procedure code, charge, benchmark, difference, price type and source. They contain no patient/account/claim fields or service dates. A private mapping links observations to the owner and saved result. Deleting the result or account removes its linked observations. No public contribution/aggregation program is enabled.
 
-Any estimate must name its reference and comparison basis. Intended reference sources are Medicare Physician Fee Schedule, OPPS and clinical laboratory fee schedules; CMS NCCI coding edits; hospital price-transparency and insurer Transparency in Coverage files; and the patient's own EOB. These sources answer different questions. A benchmark difference is not automatically an amount owed back, and an SBC is not a price list or proof of claim eligibility. NCCI checks require the applicable context and exceptions; they are not an unconditional code-pair blacklist.
+## Care Search
 
-The intended charge dataset records the charging location, observed charge, and an estimated over/under-benchmark amount without embedding PII in that charge row. Separately owned account/review data can provide the user's access to their review. The schema, aggregation/consent policy, and estimation rules for that dataset have not yet been implemented or finalized. The current review JSON is user-linked and must not be described as de-identified.
+Find suitable providers using specialty, city/state, language, insurance plan, telehealth and accessibility preferences. Optional demographics describe **the patient**, not the physician: age group, gender and race/ethnicity. Users explicitly opt in with `use_demographics`.
 
-Open questions: which reference takes precedence for each charge type; how to present uncertain savings; whether to generate dispute/negotiation letters automatically; whether contributions form a shared dataset. Existing deterministic inquiry drafts are not the final product specification.
+The backend obtains individual-provider candidates from the public CMS NPI Registry and falls back to sourced local records when needed. A bounded public AI web search supplies research and source-backed service attributes. Registry candidates start at 60 match points; local fallback candidates start at 40. Matching self-reported patient cohort reviews can add 0–20 points, language 10, telehealth 5, accessibility 5. These implementation defaults are evidence-match scores, not clinical quality ratings or proof that one doctor is best.
 
-### 2. Care Search
+Patient cohort comparisons use supplied aggregate review data only: same selected patient demographic fields, self-reported demographics, at least ten reviews, 1–5 average rating, valid source, and a retrieval date no more than one year old. The newest matching row contributes to ranking. The threshold is a prototype rule, not a statistical guarantee. No demographic inference from names/photos, no doctor-demographic filtering, and no fabricated review subgroup statistics. If no matching cohort exists, return a caution and continue other matching.
 
-Find the doctor who best fits the user, using profile context and an explanation of why each doctor fits. The current directory/price filters are a starting implementation, not the full intended product.
+Patient demographics remain local to the matching calculation and saved profile; they are not included in public search or AI enrichment inputs. Public search uses specialty/location and service preferences. Insurance network, appointment availability and clinical quality remain unverified and do not receive inferred score boosts. Search is limited to the first 50 registry candidates and returns up to 20 recommendations; it is not exhaustive.
 
-Candidate profile inputs to discuss: reason for visit or specialty, location/travel radius, insurance plan, budget, appointment timing, language, accessibility needs, telehealth preference, and optional provider preferences. Which fields are required, ranking weights, data providers, and network/availability verification remain unresolved. Insurance import can supply plan context but does not independently verify a doctor's network status.
+## Prescription Comparison
 
-### 3. Prescription Comparison
+The user selected exact-prescription comparison first. RxNorm lookup returns clinical/branded drug candidates; the user chooses the exact strength/form/brand product. The backend resolves its canonical identity and searches public sources for matching quantity, ZIP and cash/coupon price type.
 
-Find less expensive prescribed medicine. Product decisions still needed: whether to compare the exact drug across pharmacies, generic equivalents, or alternative treatments requiring prescriber review; supported geographic scope; pricing feeds; insurance versus cash pricing; and discount eligibility. No medication comparison backend has been implemented.
+Only source-backed, exact-product offers with quotes survive validation. Offers are sorted by price within the requested type, with optional difference from the user's current price. Unknown prices are not zero, package prices are not prorated, and insurance prices are not inferred. Generic or therapeutic substitution is not automatically recommended. Coupon eligibility, inventory and checkout price require pharmacist confirmation.
 
-## Shared insurance profile
+## Shared capabilities and uncertainty
 
-Confirmed workflow:
+OpenAI is the selected AI provider. Insurance-card import discovers and interprets an SBC with candidate confirmation and manual upload fallback. SBC terms are not live membership, remaining deductible or claim approval.
 
-- Insurance-card upload is the primary optional profile entry point.
-- OpenAI reads available public plan attributes.
-- Automatically search for the applicable SBC using those attributes and authoritative plan sources.
-- Ask for missing information or candidate confirmation when the exact plan/year/variant is ambiguous.
-- Retrieve and interpret the actual SBC; cite its source and supporting page/quote for each returned benefit.
-- Offer manual SBC upload when automatic discovery/retrieval cannot finish, including employer plans with documents behind a login.
-- Do not stop all progress when one stage fails. Preserve useful results and flag what is missing with a caution that the result may be inaccurate.
+All new product results carry `uncertainty.may_be_inaccurate`, an overall caution and per-step cautions with missing information and suggested actions. Insurance retains its original top-level caution contract. Product POSTs run as cancellable background jobs with duplicate-active-request protection; partial successful results are saved for the user. Raw document uploads for bill extraction are processed in memory, not stored; extracted results may include claim references and remain private.
 
-This backend implements that insurance workflow. CMS catalogue matching is available when an operator supplies the CSV; hosted OpenAI web search is the automatic fallback, including public employer/insurer sources. Neither search nor card possession guarantees access to employer-only documents. There is no insurer login or eligibility integration in this version.
+Compliance assessment remains a later phase. No HIPAA compliance claim is made. Live provider success and runtime tests for the new product services are deferred. Data dependencies are explicit in the [data guide](../backend/DATA_COLLECTION.md).
 
-## AI and uncertainty contract
+## Optional-data fallback policy
 
-OpenAI is the selected provider. It may extract, locate, organize, and explain information. It must not invent prices, coverage terms, source URLs, or missing amounts. Unknowns remain unknown. Results carry `steps`, `cautions`, `missing`, and `action` fields so the caller can explain gaps rather than silently treating partial data as complete.
+No imported dataset is required to use a feature. Bill pricing falls back from imported references to source-backed public research, then to a useful bill/EOB review without a monetary benchmark. Public fallback rates retain quotes and uncertainty and are excluded from observations. General care matching continues without patient cohort data. Prescription identity outages return public identification research rather than an invented match. Every response makes the evidence actually used and still missing visible.
 
-A caution is not permission to present an arbitrary plan as correct. Plan-ID/year/state or insurer conflicts with the retrieved SBC withhold benefits. Candidate-only matches require selection. Missing benefit evidence removes that benefit from the interpreted list. Readable portions remain available when safe to separate.
+## Results are browsable items
 
-Compliance assessment is scheduled for a later phase. The prototype and its documentation make no HIPAA-compliance claim.
+Search results are intended for a grid of providers, drug products, pharmacy offers, bill findings and price comparisons. The backend supplies structured items with display labels, numeric fields, sources and cautions, not a chatbot answer. Research links are separate, explicitly unverified source cards. Supporting prose is optional detail rather than the primary result. Frontend implementation remains deferred.

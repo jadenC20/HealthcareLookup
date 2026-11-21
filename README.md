@@ -1,65 +1,52 @@
 # ClearCare
 
-ClearCare helps users review medical bills, find suitable doctors, and find less expensive prescribed medicine. AI is integral to the intended experience: it reads documents and explains evidence. Pricing and coverage conclusions must come from identifiable sources, not model memory.
+ClearCare's Go backend supports three product workflows: **Bill Review**, **Care Search**, and **Prescription Comparison**. Accounts, insurance import, patient preferences, and private saved results support all three.
 
-The active backend is Go. This iteration implements the **insurance card → plan discovery → Summary of Benefits and Coverage (SBC) → cited benefit interpretation** backend workflow. No frontend work was included in this iteration. The existing profile can upload a card, but its old text and controls do not yet expose the automated workflow, candidate selection, or cautions. Use the API described below to exercise the complete backend.
+| Feature | Backend behavior |
+|---|---|
+| Bill Review | OpenAI extraction of bills/images and optional EOB; confirmed arithmetic/EOB analysis; contextual imported price benchmarks and NCCI review flags; public reference search; AI explanation; private saved results and separate charge observations |
+| Care Search | CMS NPI Registry lookup, local directory fallback, AI web research, source-backed preference matching, optional patient-demographic cohort review matching |
+| Prescription Comparison | Public RxNorm product lookup and explicit product selection; AI web search for exact drug/quantity/location prices; source-filtered cash or coupon comparisons |
+| Insurance | Card extraction, SBC discovery/selection/download, cited interpretation, manual upload and retry |
 
-## Product and implementation status
+These are implemented API flows, not a claim that all external data is available. Missing credentials, reference files, prices, or review demographics produce partial results with cautions. Web-extracted prices and provider attributes need confirmation. Patient demographic reviews are used only when explicitly self-reported aggregate data is supplied; demographics belong to the patient, never the searched doctor.
 
-| Area | Intended experience | Current implementation |
-|---|---|---|
-| Bill Review | Upload bill/invoice/receipt image or PDF, optionally add an EOB beside it; AI extracts charges and compares them with grounded references | Manual input, deterministic checks, saved reviews, and PDF export. Bill extraction and reference-based over/undercharge estimation are not implemented |
-| Care Search | Find the best-fit doctor using the user's profile and preferences | CSV-backed provider directory and procedure-price comparison; personalized AI ranking is not implemented |
-| Prescription Comparison | Find cheaper prescribed medicine | Not implemented; the existing UI displays an availability notice |
-| Insurance profile | Upload a card, automatically find an SBC, interpret benefits, expose uncertainty | Implemented backend with OpenAI, optional CMS catalogue, web search fallback, candidate selection, manual SBC upload, persistence, citations, and structured cautions |
-| Accounts | Private saved information and local sessions | Registration, login/logout, profile, saved reviews, deletion, PDF reports |
+The frontend has not been updated to expose the new feature APIs. Existing screens may still describe previously unavailable capabilities. No Python backend remains.
 
-See [the product specification](docs/PRODUCT.md) for confirmed decisions and unresolved product questions. See [architecture](ARCHITECTURE.md) for frontend and backend graphs.
+## Start
 
-## Run locally
-
-Requires Go 1.24+ and Node.js. No Python environment or OCR installation is needed by the active backend.
+Requires Go 1.24+ and Node.js. Export `OPENAI_API_KEY` in the server environment and run:
 
 ```sh
-# Supply your OpenAI key in the shell environment (do not commit it).
-export OPENAI_API_KEY='your-key'
-# Optional: override the model available to your API account.
-export OPENAI_MODEL='gpt-4.1'
-export OPENAI_SEARCH_MODEL='gpt-4.1'
 npm run dev -- --demo
 ```
 
-The launcher builds a Go executable, starts it on `127.0.0.1:8000`, and starts the static frontend/API proxy on `127.0.0.1:4173`. Open http://127.0.0.1:4173. `--demo` selects fictional care-search CSVs; it does **not** mock or disable OpenAI. Insurance uploads can make paid API calls when a key is configured.
-
-If Go is not on PATH, set `CLEARCARE_GO` to its executable. Dependencies are pinned in [go.mod](backend/goapp/go.mod) and [go.sum](backend/goapp/go.sum); the first build downloads them. The application reads process environment variables; it does not automatically load `.env` files. See [.env.example](.env.example) and [operations](docs/OPERATIONS.md).
-
-To start only the backend:
+The frontend runs at `http://127.0.0.1:4173`, the Go API at `http://127.0.0.1:8000`. To run only the backend:
 
 ```sh
 cd backend/goapp
-CLEARCARE_DEMO=1 go run .
+go run .
 ```
 
-## Insurance automation
+`CLEARCARE_GO` selects the Go executable for the launcher. Configuration is documented in [.env.example](.env.example); `.env` files are not automatically loaded. Demo mode selects fictional care CSVs; it does not disable real OpenAI/public API requests. OpenAI models default to `gpt-4.1` and can be configured. No additional Go dependencies are required for the public integrations.
 
-1. An authenticated card upload starts extraction and plan discovery.
-2. The backend extracts public plan attributes from the card. It does not include member IDs or card images in web-search requests.
-3. It tries the configured CMS catalogue, then OpenAI web search when the catalogue cannot establish a unique exact variant.
-4. The user can correct/confirm details and select a source-backed candidate when the match is ambiguous.
-5. The backend downloads the selected public PDF, preserves its hash/source, and extracts cited benefits. A user-uploaded SBC is the fallback for unavailable documents.
-6. Every incomplete or unverifiable result carries `may_be_inaccurate`, a caution message, and step-specific missing information and recovery actions.
+## Data and limitations
 
-A missing API key, unavailable model, failed search, blocked document, or unreadable field results in a stored partial result—not fabricated coverage. The API always distinguishes SBC terms from current member eligibility or deductible balances. [Complete endpoint contract and examples](docs/API.md).
+The default database is `backend/clearcare.db`. `CLEARCARE_DB` and `CLEARCARE_DATA_DIR` override database/reference paths. Product requests run as cancellable background jobs and successful results are saved privately. Completed results/jobs are retained for 90 days by default; `CLEARCARE_RESULT_RETENTION_DAYS` configures 1–3650 days. Patient preferences and saved results are private account data. Charge observation rows exclude patient IDs, names, claim numbers and dates; a separate ownership table provides private access. This linkage means the database as a whole is not anonymous.
 
-## Storage and external processing
+Imports are optional enhancements. Bill Review falls back to quoted public-source rates, then bill/EOB checks and billing questions when no applicable price is found. Public fallback rates are explicitly cautioned and excluded from charge observations. Care Search continues general matching without demographic-review data. The app does not automatically ingest arbitrary large hospital/TiC files. RxNorm identifies medications and does not supply retail prices. Public drug-price offers can be absent, outdated or conditional. NPI registration does not verify network participation, availability or clinical quality.
 
-The default SQLite file is `backend/clearcare.db`. It stores accounts, hashed session tokens, saved reviews, insurance cards, lookup results, and retrieved/uploaded SBCs. `CLEARCARE_DB` overrides the path. The existing Python account tables and scrypt hashes remain readable; the new insurance workflow table is created additively. Back up existing data before switching versions.
+## Documentation
 
-Card and SBC interpretation sends document contents to OpenAI with Responses API `store: false`. This is not a promise of zero provider retention. Web search receives the public plan fields, and document retrieval contacts public source hosts. No raw provider error bodies, keys, or documents are written to application logs. Deleting a card removes its lookup and saved SBC; account deletion removes all owned card/workflow records. [Storage and deletion details](docs/OPERATIONS.md).
+- [Product behavior and decisions](docs/PRODUCT.md)
+- [Architecture and backend/frontend graphs](ARCHITECTURE.md)
+- [API contracts](docs/API.md)
+- [Operations and configuration](docs/OPERATIONS.md)
+- [Reference imports and public sources](backend/DATA_COLLECTION.md)
 
-This remains a loopback prototype, with no production compliance certification, account recovery, or live eligibility connection. Compliance work is a later project phase.
+## Verification
 
-## Validation
+A Go build checks compilation. Tests and live endpoint checks for the new product flows are deferred at the user's request. Existing tests remain available:
 
 ```sh
 cd backend/goapp
@@ -67,10 +54,4 @@ go test ./...
 go vet ./...
 ```
 
-The default tests use synthetic inputs and simulated external services. Opt-in paid provider verification:
-
-```sh
-CLEARCARE_LIVE_TEST=1 go test ./insurance -run TestLiveOpenAI -v
-```
-
-That test sends synthetic PDFs and a public plan query, never real patient data. `npm run check` validates the existing JavaScript syntax. The previous Python source and tests remain as historical reference and are not the active backend.
+The opt-in `CLEARCARE_LIVE_TEST=1 go test ./insurance -run TestLiveOpenAI -v` makes paid OpenAI calls with synthetic documents. The last live check returned 401 with the configured credential; live success is not verified.

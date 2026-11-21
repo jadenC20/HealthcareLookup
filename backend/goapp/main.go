@@ -4,6 +4,7 @@ import (
 	"clearcare/account"
 	"clearcare/billreview"
 	"clearcare/caresearch"
+	"clearcare/prescription"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -36,6 +37,20 @@ func main() {
 		http.ServeFile(w, r, samplePath)
 	})
 	mux.HandleFunc("POST /bills/analyze", billreview.HandleAnalyze)
+	mux.HandleFunc("POST /bill-review/extract", accounts.AsyncFeature("bill_extraction", func(w http.ResponseWriter, r *http.Request) { billreview.ExtractDocuments(r.Context(), w, r) }, false, true))
+	mux.HandleFunc("POST /bill-review/analyze", accounts.AsyncFeature("bill_review", accounts.ReviewBill, true, false))
+	mux.HandleFunc("GET /bill-review/observations", accounts.Observations)
+	mux.HandleFunc("POST /care-search/recommend", accounts.AsyncFeature("care_search", accounts.Recommend(care), false, false))
+	mux.HandleFunc("GET /prescription-comparison/drugs", accounts.Protected(false, prescription.Drugs))
+	mux.HandleFunc("POST /prescription-comparison/compare", accounts.AsyncFeature("prescription_comparison", prescription.Compare, false, true))
+	mux.HandleFunc("GET /jobs", accounts.Jobs)
+	mux.HandleFunc("GET /jobs/{id}", accounts.Jobs)
+	mux.HandleFunc("DELETE /jobs/{id}", accounts.Jobs)
+	mux.HandleFunc("GET /profile/preferences", accounts.Preferences)
+	mux.HandleFunc("PUT /profile/preferences", accounts.Preferences)
+	mux.HandleFunc("GET /results", accounts.Runs)
+	mux.HandleFunc("GET /results/{id}", accounts.Runs)
+	mux.HandleFunc("DELETE /results/{id}", accounts.Runs)
 	mux.HandleFunc("GET /providers", care.Providers)
 	mux.HandleFunc("GET /prices/compare", care.Prices)
 	mux.HandleFunc("GET /data/status", care.Status)
@@ -74,7 +89,7 @@ func main() {
 			http.Error(w, "Origin not allowed", http.StatusForbidden)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 11<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, 21<<20)
 		mux.ServeHTTP(w, r)
 	})
 	log.Println("ClearCare Go API listening on 127.0.0.1:8000")

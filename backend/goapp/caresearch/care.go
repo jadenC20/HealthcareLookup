@@ -1,8 +1,8 @@
 package caresearch
 
 import (
+	"clearcare/evidence"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -17,6 +17,7 @@ import (
 type row map[string]any
 type Service struct {
 	providers, prices []row
+	reviews           []ReviewSummary
 	errors            []string
 }
 
@@ -48,7 +49,7 @@ func read(path string) ([]row, error) {
 }
 func str(v any) string { s, _ := v.(string); return s }
 func Load(dir string) *Service {
-	s := &Service{providers: []row{}, prices: []row{}, errors: []string{}}
+	s := &Service{providers: []row{}, prices: []row{}, errors: []string{}, reviews: loadReviews(dir)}
 	var err error
 	s.providers, err = read(filepath.Join(dir, "providers.csv"))
 	if err != nil {
@@ -94,8 +95,7 @@ func Load(dir string) *Service {
 	return s
 }
 func jsonOut(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	evidence.JSON(w, 200, v)
 }
 func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, row{"providers_loaded": len(s.providers), "prices_loaded": len(s.prices), "errors": s.errors})

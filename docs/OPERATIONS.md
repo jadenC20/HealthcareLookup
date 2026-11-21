@@ -18,6 +18,7 @@ Export environment variables through your shell or process manager. [.env.exampl
 | CLEARCARE_SECURE_COOKIES | unset | `1` enables Secure session cookies; use with HTTPS |
 | CLEARCARE_GO | go | Go executable used by the root development launcher |
 | CLEARCARE_LIVE_TEST | unset | `1` opts into billable live insurance tests |
+| CLEARCARE_RESULT_RETENTION_DAYS | 90 | Retain completed product results/jobs for 1–3650 days |
 
 Demo mode does **not** disable OpenAI requests. Leave the key unset to exercise explicit unavailable/partial states without external AI calls. A catalog change or environment change requires a backend restart.
 
@@ -48,7 +49,7 @@ Uploaded card bytes and downloaded/uploaded SBC PDFs are sent to OpenAI for inte
 
 The prototype stores document bytes in SQLite without application-level encryption. Use synthetic data for development and protect database files and backups. Card deletion deletes its insurance workflow/SBC too; deleting insurance results alone preserves the card. Account deletion removes its associated records. These are application deletes, not guaranteed forensic erasure of database pages/backups. Formal HIPAA work remains deferred, as requested.
 
-Stop the server before copying the database for backup. Preserve the backup outside version control. Table creation is additive; there is no migration framework or automated rollback. Catalog/CSV inputs are external files and should be backed up/versioned separately without patient data.
+Stop the server before copying the database for backup. Preserve the backup outside version control. Startup applies versioned transactional migrations recorded in `schema_migrations`; there is no automated down-migration. Startup also prunes expired feature results, their linked charge observations, and completed jobs. Catalog/CSV inputs are external files and should be backed up/versioned separately without patient data.
 
 ## Verification
 
@@ -66,3 +67,19 @@ Ordinary tests cover workflow branching, caution persistence, candidate selectio
 ## API references
 
 Implementation uses the [OpenAI Responses structured-output interface](https://developers.openai.com/api/docs/guides/structured-outputs), [PDF inputs](https://developers.openai.com/api/docs/guides/file-inputs), and [web search with source metadata](https://developers.openai.com/api/docs/guides/tools-web-search). The endpoint is fixed to the official OpenAI API. See [API.md](API.md) for application routes and caution fields.
+
+## Three product services
+
+The same OpenAI configuration powers bill/EOB extraction and explanation, provider web research/enrichment, and exact-prescription price search. NPI Registry and RxNorm calls use public HTTPS endpoints with 25-second timeouts. Product workflows use four-minute job deadlines and six automated requests per minute per account; the rate limit is in memory. Two jobs execute concurrently. Job records survive restart, but in-flight request bodies do not: startup marks queued/running work `interrupted`. A product retry is a new request/result, while an identical active request returns the existing job.
+
+`CLEARCARE_DATA_DIR` also supplies `bill_benchmarks.csv`, `ncci_edits.json`, and `patient_review_cohorts.json`; see the [data guide](../backend/DATA_COLLECTION.md). Bill references are read per request. Cohorts load at startup alongside care data. When demo mode is enabled, care data/cohorts come from the demo subdirectory; bill reference imports continue to use the configured base directory. Empty templates are not real data and result in explicit missing-evidence cautions.
+
+Product results are persisted in `feature_runs`, patient preferences in `patient_preferences`, charge rows in `charge_observations`, and their private ownership in `observation_owners`. Account deletion clears these tables' owned records. Deleting a saved result also deletes linked observations. SQL deletion is not forensic erasure of backups/pages.
+
+Bill uploads are processed in memory; extracted JSON can include claim references and remains private. Patient demographic preferences are stored locally and used for local cohort matching, excluded from public AI search/enrichment. Public search still receives the specialty, city/state and service preferences; prescription search receives drug, quantity and ZIP. Treat these requests as external processing. API cautions are required even when partial data is available.
+
+New product routes compiled successfully during implementation. Their runtime tests and live API checks were deferred at the user's request. Existing insurance checks previously received HTTP 401 from the configured OpenAI credential. Compilation does not verify remote API behavior, source accuracy or full runtime correctness.
+
+Bill observation storage requires successful public lookup of the supplied facility NPI. Identifier verification does not verify the facility's relationship to a claim. Failed lookup leaves the result saved and cautioned without inserting charge observations.
+
+Reference imports are optional: missing or inapplicable bill-price files trigger public-source fallback, and unavailable review cohorts use general care matching. No operator import is needed to obtain the baseline review/recommendation. OpenAI/search outages retain deterministic bill analysis and explanations; drug identity outages return available public research without unverified numeric offers. See the API's missing-data fallback contract.

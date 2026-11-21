@@ -3,6 +3,7 @@ package account
 import (
 	"bytes"
 	"clearcare/billreview"
+	"clearcare/evidence"
 	"clearcare/insurance"
 	"context"
 	"crypto/rand"
@@ -25,10 +26,14 @@ import (
 )
 
 type Service struct {
-	db        *sql.DB
-	mu        sync.Mutex
-	attempts  map[string][]time.Time
-	insurance *insurance.Engine
+	db         *sql.DB
+	mu         sync.Mutex
+	attempts   map[string][]time.Time
+	insurance  *insurance.Engine
+	jobsMu     sync.Mutex
+	jobCancels map[string]context.CancelFunc
+	jobSem     chan struct{}
+	jobWG      sync.WaitGroup
 }
 type User struct {
 	ID    string `json:"id"`
@@ -65,9 +70,26 @@ func Open(path string) (*Service, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Service{db: db, attempts: map[string][]time.Time{}, insurance: &insurance.Engine{AI: insurance.NewOpenAI(), Catalog: insurance.LoadCatalog(os.Getenv("CLEARCARE_PLAN_CATALOG")), Fetcher: insurance.NewFetcher()}}, nil
+	s := &Service{db: db, attempts: map[string][]time.Time{}, insurance: &insurance.Engine{AI: insurance.NewOpenAI(), Catalog: insurance.LoadCatalog(os.Getenv("CLEARCARE_PLAN_CATALOG")), Fetcher: insurance.NewFetcher()}, jobCancels: map[string]context.CancelFunc{}, jobSem: make(chan struct{}, 2)}
+	if err := s.initFeatures(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.pruneExpired(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
 }
-func (s *Service) Close() error { return s.db.Close() }
+func (s *Service) Close() error {
+	s.jobsMu.Lock()
+	for _, cancel := range s.jobCancels {
+		cancel()
+	}
+	s.jobsMu.Unlock()
+	s.jobWG.Wait()
+	return s.db.Close()
+}
 func token() string {
 	b := make([]byte, 32)
 	if _, e := rand.Read(b); e != nil {
@@ -90,7 +112,7 @@ func password(p, salt string) (string, error) {
 func respond(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	json.NewEncoder(w).Encode(evidence.Present(v))
 }
 func fail(w http.ResponseWriter, status int, msg string) {
 	respond(w, status, map[string]string{"detail": msg})
@@ -270,7 +292,7 @@ func (s *Service) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	for _, query := range []string{`DELETE FROM insurance_workflows WHERE user_id=?`, `DELETE FROM insurance_cards WHERE user_id=?`, `DELETE FROM reviews WHERE user_id=?`, `DELETE FROM sessions WHERE user_id=?`, `DELETE FROM users WHERE id=?`} {
+	for _, query := range []string{`DELETE FROM charge_observations WHERE id IN (SELECT observation_id FROM observation_owners WHERE user_id=?)`, `DELETE FROM observation_owners WHERE user_id=?`, `DELETE FROM feature_jobs WHERE user_id=?`, `DELETE FROM feature_runs WHERE user_id=?`, `DELETE FROM patient_preferences WHERE user_id=?`, `DELETE FROM insurance_workflows WHERE user_id=?`, `DELETE FROM insurance_cards WHERE user_id=?`, `DELETE FROM reviews WHERE user_id=?`, `DELETE FROM sessions WHERE user_id=?`, `DELETE FROM users WHERE id=?`} {
 		if _, e = tx.Exec(query, u.ID); e != nil {
 			fail(w, 500, "Unable to delete account.")
 			return
@@ -388,7 +410,7 @@ func pdf(w http.ResponseWriter, records []review, user *User) {
 		p.SetFont("Arial", "", 10)
 		p.MultiCell(0, 6, fmt.Sprintf("Claim: %s\n", payload.Request.Bill.Claim), "", "", false)
 		for _, l := range payload.Request.Bill.Lines {
-			p.MultiCell(0, 6, fmt.Sprintf("%s | %s | %s | %s | quantity %d | $%.2f | page %v", l.ID, l.Date, l.Description, l.Code, l.Quantity, l.Charge, pageNumber(l.Page)), "", "", false)
+			p.MultiCell(0, 6, fmt.Sprintf("%s | %s | %s | %s | quantity %s | charge %s | page %v", l.ID, l.Date, l.Description, l.Code, optionalInt(l.Quantity), optionalMoney(l.Charge), pageNumber(l.Page)), "", "", false)
 		}
 		if eob := payload.Request.EOB; eob != nil {
 			p.MultiCell(0, 6, fmt.Sprintf("EOB claim: %s", eob.Claim), "", "", false)
@@ -396,7 +418,7 @@ func pdf(w http.ResponseWriter, records []review, user *User) {
 				p.MultiCell(0, 6, fmt.Sprintf("EOB patient responsibility: $%.2f", *eob.Patient), "", "", false)
 			}
 			for _, l := range eob.Lines {
-				p.MultiCell(0, 6, fmt.Sprintf("%s | %s | %s | billed $%.2f | paid $%.2f | adjustment $%.2f | patient $%.2f", l.ID, l.Date, l.Description, l.Billed, l.Paid, l.Adjustment, l.Patient), "", "", false)
+				p.MultiCell(0, 6, fmt.Sprintf("%s | %s | %s | billed %s | paid %s | adjustment %s | patient %s", l.ID, l.Date, l.Description, optionalMoney(l.Billed), optionalMoney(l.Paid), optionalMoney(l.Adjustment), optionalMoney(l.Patient)), "", "", false)
 			}
 		}
 		for _, f := range payload.Analysis.Findings {
@@ -420,6 +442,18 @@ func pageNumber(page *int) any {
 		return "?"
 	}
 	return *page
+}
+func optionalInt(v *int) string {
+	if v == nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%d", *v)
+}
+func optionalMoney(v *float64) string {
+	if v == nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("$%.2f", *v)
 }
 func (s *Service) SavedPDF(w http.ResponseWriter, r *http.Request) {
 	u, ok := s.identity(w, r, false)
@@ -465,11 +499,16 @@ func (s *Service) AccountPDF(w http.ResponseWriter, r *http.Request) {
 	pdf(w, records, &u)
 }
 func (s *Service) Extract(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.identity(w, r, true)
+	u, ok := s.identity(w, r, true)
 	if !ok {
 		return
 	}
-	fail(w, http.StatusNotImplemented, "Automatic document extraction is not available yet. Enter bill details manually or use the sample.")
+	if !s.allowFeature(w, u.ID) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	defer cancel()
+	billreview.ExtractDocuments(ctx, w, r)
 }
 
 // UploadCard stores the card and starts extraction and SBC discovery immediately.

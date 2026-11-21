@@ -7,8 +7,5 @@
     "dev": "node dev.mjs",
     "start": "node server.mjs",
     "check": "node --check app.js && node --check integration.js && node --check server.mjs && node --check dev.mjs"
-  },
-  "dependencies": {
-    "tesseract.js": "^6.0.1"
   }
 }

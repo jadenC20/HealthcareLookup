@@ -1,37 +1,13 @@
-# Go API
+# Go backend
 
-Run from this directory:
+Run `go run .` from this directory. Go 1.24+ is required. The default listener is `127.0.0.1:8000`; database and data paths are `../clearcare.db` and `../data`.
 
-```sh
-go run .
-go test ./...
-go test -race ./...
-go vet ./...
-```
+Product packages are [billreview](billreview/), [caresearch](caresearch/) and [prescription](prescription/). Shared support lives in [account](account/), [insurance](insurance/) and [evidence](evidence/). [main.go](main.go) wires the API. Go is the only backend implementation.
 
-The server uses Go's HTTP server and SQLite. Defaults are `127.0.0.1:8000`, database `../clearcare.db`, and care-search data `../data`. It adds missing tables at startup and preserves existing account/password and review formats.
+Set `OPENAI_API_KEY` for extraction, explanation and public web search. Without it, deterministic/public API work can still return partial results with cautions. Public NPI Registry and RxNorm calls require network access. Imported reference files and review cohorts are documented in the [data guide](../DATA_COLLECTION.md).
 
-## Packages
+See [API contracts](../../docs/API.md), [operations](../../docs/OPERATIONS.md), [product decisions](../../docs/PRODUCT.md) and [architecture](../../ARCHITECTURE.md).
 
-| Package | Responsibility |
-|---|---|
-| [account](account/) | Identity, profile, card/SBC storage, revision-guarded insurance actions, saved reviews, PDF export |
-| [insurance](insurance/) | OpenAI Responses requests, structured extraction, catalog/web discovery, public PDF retrieval, interpretation, cautions |
-| [billreview](billreview/) | Deterministic analysis of manually supplied bill and EOB data |
-| [caresearch](caresearch/) | CSV-backed provider and procedure-price search |
+Long-running product POST routes return persisted job handles. Poll `GET /jobs/{id}` or cancel with `DELETE /jobs/{id}`; completed job responses contain the saved result ID and structured product result. Results and completed jobs are retained for 90 days unless `CLEARCARE_RESULT_RETENTION_DAYS` changes the period.
 
-[main.go](main.go) wires routes and configuration. No prescription service is implemented. The old Python backend is not required to run this server.
-
-## Insurance automation
-
-Set `OPENAI_API_KEY` before startup. `OPENAI_MODEL` defaults to `gpt-4.1`; `OPENAI_SEARCH_MODEL` defaults to the same model. Both must support the capabilities used by their requests. Optional `CLEARCARE_PLAN_CATALOG` points to a CMS Plan Attributes CSV or the documented normalized catalog.
-
-Card uploads automatically extract public plan attributes and search for SBC candidates. Confirmed exact catalog variants can proceed automatically; ambiguous or web-discovered candidates require selection through the API. Selected PDFs are downloaded and interpreted with source quotes and page numbers. Manual SBC upload and retry are supported. Missing configuration, unavailable sources, incomplete terms, and mismatches are represented explicitly in the result.
-
-```sh
-CLEARCARE_LIVE_TEST=1 go test ./insurance -run TestLiveOpenAI -v
-```
-
-This optional command makes billable OpenAI calls with synthetic PDFs and a public plan search. Normal tests use local fixtures and mocked external responses. A live search can legitimately return zero candidates; passing that test does not prove exhaustive plan coverage.
-
-See the [API](../../docs/API.md), [operations guide](../../docs/OPERATIONS.md), [data guide](../DATA_COLLECTION.md), and [architecture](../../ARCHITECTURE.md). Bill upload extraction at `/documents/extract` still returns 501; insurance extraction is a separate implemented flow.
+`go build ./...` checks compilation. Runtime tests for the new product workflows and live external verification are deferred. Existing tests remain runnable with `go test ./...`; opt-in insurance provider checks use `CLEARCARE_LIVE_TEST=1 go test ./insurance -run TestLiveOpenAI -v` and can incur API charges.

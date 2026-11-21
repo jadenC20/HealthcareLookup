@@ -1,108 +1,101 @@
 # ClearCare architecture
 
-The active server is a single Go application in [backend/goapp](backend/goapp). The product features are **Bill Review, Care Search, and Prescription Comparison**. Accounts and insurance-plan import are shared capabilities. These packages are modules in one process, not separately deployed microservices.
+One Go process implements three product services: Bill Review, Care Search and Prescription Comparison. Accounts, insurance import and evidence handling are shared support. The frontend is unchanged by this implementation.
 
 ## Backend graph
 
 ```mermaid
 flowchart TD
-    Client[Existing frontend or API client] --> Proxy[Node API proxy]
-    Proxy --> Router[Go HTTP router and request limits]
-    Router --> Account[account: identity, profile, reviews and reports]
-    Router --> Bills[billreview: deterministic bill and EOB checks]
-    Router --> Care[caresearch: provider and procedure-price CSV search]
-    Account --> Insurance[insurance: card to SBC workflow]
-    Insurance --> AI[OpenAI Responses: extraction and interpretation]
-    Insurance --> Catalog[Optional CMS plan catalogue CSV]
-    Insurance --> Search[OpenAI hosted web search]
-    Search --> Candidates[Source-backed plan candidates]
-    Catalog --> Candidates
-    Candidates --> Match[Exact variant or user selection]
-    Match --> Fetch[Bounded public HTTPS PDF retrieval]
-    Fetch --> AI
-    Insurance --> Result[Benefits, source hash, page citations and cautions]
-    Account --> DB[(SQLite)]
-    Result --> Account
-    Account --> PDF[Review and account PDF reports]
-    Care --> CSV[Provider and service-price CSVs]
-    Prescription[Prescription Comparison: not implemented]
+    Client[API client / existing frontend] --> Router[Go HTTP router]
+    Router --> Account[Account authentication, CSRF and request limits]
+    Account --> Bills[Bill Review]
+    Account --> Care[Care Search]
+    Account --> Rx[Prescription Comparison]
+    Account --> Insurance[Insurance card and SBC workflow]
+    Account --> Jobs[Feature job coordinator]
+    Jobs --> Bills
+    Jobs --> Care
+    Jobs --> Rx
+    Bills --> AI[OpenAI structured extraction and explanation]
+    Bills --> Benchmarks[Imported price references and NCCI edits]
+    Bills --> Search[OpenAI public web search with source metadata]
+    Care --> NPI[CMS NPI Registry]
+    Care --> Local[Local provider CSV fallback]
+    Care --> Cohorts[Self-reported patient review aggregates]
+    Care --> Search
+    Care --> AI
+    Rx --> RxNorm[NLM RxNorm public API]
+    Rx --> Search
+    Rx --> AI
+    Insurance --> AI
+    Insurance --> Search
+    Insurance --> CMS[Optional CMS plan catalog]
+    Insurance --> PDF[Bounded public PDF download]
+    Account --> DB[(SQLite private profiles and results)]
+    Jobs --> DB
+    Bills --> Observations[Charge observations and separate ownership mapping]
+    Observations --> DB
 ```
 
-## Frontend graph: existing code, unchanged in this iteration
+## Frontend graph: existing interface
 
 ```mermaid
 flowchart TD
-    Shell[index.html and styles.css] --> App[app.js navigation and dashboard]
+    Shell[index.html / styles.css] --> App[app.js]
     App --> Integration[integration.js]
-    Integration --> BillUI[Manual bill and EOB editor]
-    Integration --> CareUI[Provider and price search]
-    Integration --> Profile[Accounts and insurance-card upload]
-    Integration --> Meds[Prescription unavailable notice]
-    BillUI & CareUI & Profile --> Proxy[server.mjs static server and API proxy]
+    Integration --> Bills[Existing manual bill editor]
+    Integration --> Care[Existing care directory and prices]
+    Integration --> Profile[Existing accounts and card upload]
+    Integration --> Rx[Existing prescription unavailable notice]
+    Bills & Care & Profile --> Proxy[server.mjs API proxy]
     Proxy --> Go[Go API]
-    Future[Future UI: candidates, corrections, SBC upload and cautions] -.-> Go
+    Future[Future UI for new service APIs and cautions] -.-> Go
 ```
 
-The frontend's existing card copy still describes lookup as unavailable. The backend now runs it, but this iteration deliberately does not update frontend files. The complete workflow can be used through the [API](docs/API.md).
+Existing screens do not yet expose the new automated service flows. Backend additions do not imply UI completion.
 
-## Insurance processing sequence
-
-```mermaid
-sequenceDiagram
-    participant User as API client
-    participant API as Account API
-    participant DB as SQLite
-    participant Engine as Insurance engine
-    participant AI as OpenAI
-    participant Source as CMS catalogue / public document
-    User->>API: Authenticated card upload + CSRF
-    API->>DB: Save card and new processing revision
-    API->>Engine: Start bounded synchronous workflow
-    Engine->>AI: Extract card plan fields
-    Engine->>Source: Search configured plan catalogue
-    opt No unique exact catalogue match
-        Engine->>AI: Public plan search with sources
-    end
-    Engine-->>API: Candidates and cautions
-    API->>DB: Persist only if revision still current
-    API-->>User: Result + revision
-    User->>API: Confirm details or select candidate
-    API->>Engine: Continue with new guarded revision
-    Engine->>Source: Retrieve selected public PDF
-    Engine->>AI: Interpret PDF with page quotes
-    Engine-->>API: Benefits + source metadata + missing steps
-    API->>DB: Save result and document if still current
-    API-->>User: Ready-with-caution or partial result
-```
-
-Confirmed details plus one exact CMS plan variant/year/state match can proceed through retrieval and interpretation without candidate selection. Extracted-but-unconfirmed details and web candidates require confirmation. Manual SBC upload enters at the document interpretation stage.
-
-## Modules and boundaries
+## Modules
 
 | Module | Responsibility |
 |---|---|
-| [main.go](backend/goapp/main.go) | HTTP route registration, loopback listener, origin policy, actual request-body limit |
-| [account/api.go](backend/goapp/account/api.go) | Sessions, CSRF, account/profile/review endpoints, card storage, reports |
-| [account/insurance.go](backend/goapp/account/insurance.go) | Insurance endpoints, persistence, revision guards, four-minute workflow deadline |
-| [insurance/workflow.go](backend/goapp/insurance/workflow.go) | Stage orchestration, deterministic matching, cautions, evidence acceptance |
-| [insurance/openai.go](backend/goapp/insurance/openai.go) | Responses API, strict JSON schemas, PDF/image input, sourced web search |
-| [insurance/catalog.go](backend/goapp/insurance/catalog.go) | Optional local CMS/normalized CSV catalogue |
-| [insurance/fetch.go](backend/goapp/insurance/fetch.go) | Public HTTPS PDF retrieval, redirect/DNS validation and size/time limits |
-| [billreview](backend/goapp/billreview) | Existing user-confirmed bill arithmetic, duplicates, vague charges, EOB checks |
-| [caresearch](backend/goapp/caresearch) | Existing CSV validation, directory and price queries |
+| [main.go](backend/goapp/main.go) | Routes, loopback server, origin policy, 21 MB request cap |
+| [account](backend/goapp/account/) | Identity, CSRF, account/profile, preferences, private results, observations, PDF reports |
+| [billreview](backend/goapp/billreview/) | Bill/EOB extraction, deterministic checks, benchmark differences, imported NCCI review flags, explanation |
+| [caresearch](backend/goapp/caresearch/) | Directory/price CSVs, NPI API, patient preferences, cohort matching, AI source enrichment |
+| [prescription](backend/goapp/prescription/) | RxNorm lookup, exact-product price research, source-filtered offers |
+| [insurance](backend/goapp/insurance/) | Card/SBC orchestration, Responses client, structured output, web search, safe PDF retrieval |
+| [evidence](backend/goapp/evidence/) | Shared caution contract, bounded public JSON requests and input/schema helpers |
 
-No framework or Python runtime is used by the active server. SQLite, scrypt and PDF generation use pinned Go dependencies. The historical Python packages remain for reference and are not started by [dev.mjs](dev.mjs).
+The existing Responses client remains in the insurance support package and exposes shared structured/document/search methods. Product packages call those methods rather than maintaining separate AI clients. HTTP dependencies are standard-library clients; no Python runtime is present.
 
-## Persistence and concurrency
+## Processing and persistence
 
-SQLite tables: `users`, `sessions`, `reviews`, `insurance_cards`, and `insurance_workflows`. Workflow rows contain an opaque revision, JSON result, and optional SBC bytes. A new card replaces the previous card and invalidates its derived result. User actions require the latest revision. A late external response cannot resurrect deleted data or overwrite a replacement card. Account deletion removes cards and workflow rows in the account transaction.
+Product feature requests are accepted as background jobs with a four-minute deadline. Job status, progress stage, cancellation state, result ID and completed JSON are persisted; request bodies and uploads remain in memory and are not stored in the job table. Two jobs execute concurrently. An active request hash prevents duplicate submissions for the same user and feature. A process restart marks queued/running jobs `interrupted`; clients can submit again. Public JSON requests have a 25-second timeout; OpenAI calls 90 seconds; SBC retrieval 45 seconds. Automated endpoints allow six requests per minute per account, held in memory and reset on restart.
 
-The workflow is synchronous, bounded by four minutes. GET can inspect persisted processing state during a request. An abandoned processing row older than five minutes is reported as interrupted and is retryable. This is not a durable background job queue; a server restart interrupts in-flight work. Retrying does not resume an OpenAI conversation. There is no hidden retry loop that can repeatedly incur charges.
+Insurance uses revision-guarded processing rows, preventing stale results from overwriting replacement cards. Its stale processing state becomes retryable after five minutes. Product services persist successful JSON results, including partial results, in `feature_runs`. Retrying a product action creates a separate result. A database failure returns an error instead of claiming a saved result.
 
-## External data and limits
+Tables:
 
-Card/SBC bytes are sent to OpenAI; search receives only plan fields, not member identifiers or the card file. The app requests `store: false`. The server fetches public PDF sources with a 10 MB cap and 45-second HTTP timeout. OpenAI calls have 90-second timeouts. Raw external errors are reduced to stable caution codes without echoing documents or credentials.
+- `users`, `sessions`, `reviews`: account and existing manual review records.
+- `insurance_cards`, `insurance_workflows`: private card/SBC bytes and insurance state.
+- `patient_preferences`: optional patient demographics and care preferences.
+- `feature_runs`: owner, feature, timestamp and private result JSON.
+- `feature_jobs`: durable job lifecycle/progress, request hash, completed result and result reference; no uploaded bytes.
+- `charge_observations`: facility NPI, procedure code, charge, benchmark, difference, price type and source; no patient/claim/date fields.
+- `observation_owners`: private observation-to-user/result mapping.
 
-SBC results describe plan terms. They do not establish active membership, remaining deductible, network participation, or authorization for care. Citations are AI-extracted page references and quotes, retained with the source/hash for human inspection. They are not independently verified by a second PDF parser.
+Schema changes use versioned, transactional `schema_migrations`. Results and completed jobs expire after 90 days by default, configurable through `CLEARCARE_RESULT_RETENTION_DAYS`. Account deletion removes owned records transactionally. Result deletion removes linked observations. The entire database is not anonymous because ownership mappings and private results exist.
 
-See [operations](docs/OPERATIONS.md), [API contract](docs/API.md), and [product specification](docs/PRODUCT.md) for details and remaining work.
+## Evidence boundaries
+
+Bill AI extraction keeps unknown amounts null and requires confirmation before analysis. Price benchmarks require applicable imported source rows; source search does not silently turn snippets into authoritative prices. NCCI matches are review flags with modifier/context cautions.
+
+Care recommendations begin with public registry or sourced local identities. Demographics describe the patient. Cohort matching is local, explicit opt-in, and uses self-reported aggregate data. AI enrichment receives public provider identities and service preferences, not patient demographics. It can add source-backed language/telehealth/accessibility matches but cannot certify network participation or clinical quality.
+
+Prescription comparisons first resolve the user-selected RxNorm product, then require exact product name, quantity, ZIP, price type, currency, quote and a URL returned by web search. AI-extracted evidence still requires pharmacist/source confirmation; there is no pharmacy checkout integration.
+
+OpenAI requests set `store: false`, which is not a guarantee about all provider retention policies. Document contents and public research attributes leave the server when their corresponding integrations run. Details, limits and remaining verification are in [operations](docs/OPERATIONS.md), [API](docs/API.md), and the [data guide](backend/DATA_COLLECTION.md).
+
+## Result presentation boundary
+
+[evidence/grid.go](backend/goapp/evidence/grid.go) defines a versioned grid contract. Each product constructs its own items explicitly; there is no key-name inference at serialization time. HTTP clients receive ordered display fields with available/unknown status, source links, relevant item cautions and stable IDs. Raw web-search narrative remains internal, while `research_grid` exposes source cards separately. Saved results retain the same product-built grid.
