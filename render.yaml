@@ -30,5 +30,9 @@ services:
         sync: false
       - key: SUPABASE_PUBLISHABLE_KEY
         sync: false
-      - key: OPENAI_API_KEY
+      - key: CLEARCARE_AI_PROVIDER
+        value: openrouter
+      - key: OPENROUTER_MODEL
+        value: google/gemma-4-31b-it:free
+      - key: OPENROUTER_API_KEY
         sync: false

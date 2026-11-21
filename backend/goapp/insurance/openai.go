@@ -15,11 +15,19 @@ import (
 
 type OpenAI struct {
 	Key, Model, SearchModel string
+	Provider                string
 	client                  *http.Client
 	endpoint                string
 }
 
 func NewOpenAI() *OpenAI {
+	if !strings.EqualFold(os.Getenv("CLEARCARE_AI_PROVIDER"), "openai") {
+		model := strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
+		if model == "" {
+			model = "google/gemma-4-31b-it:free"
+		}
+		return &OpenAI{Provider: "openrouter", Key: strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")), Model: model, SearchModel: model, client: &http.Client{Timeout: 90 * time.Second}, endpoint: "https://openrouter.ai/api/v1/responses"}
+	}
 	model := os.Getenv("OPENAI_MODEL")
 	if model == "" {
 		model = "gpt-4.1"
@@ -107,15 +115,43 @@ func (a *OpenAI) structured(ctx context.Context, instructions string, content []
 	dec := json.NewDecoder(strings.NewReader(text))
 	dec.DisallowUnknownFields()
 	if err = dec.Decode(dest); err != nil {
-		return stageError("invalid_ai_output", "OpenAI returned output that did not match the expected structure.")
+		return stageError("invalid_ai_output", "The AI provider returned output that did not match the expected structure.")
 	}
 	var trailing any
 	if dec.Decode(&trailing) != io.EOF {
-		return stageError("invalid_ai_output", "OpenAI returned additional unexpected content.")
+		return stageError("invalid_ai_output", "The AI provider returned additional unexpected content.")
 	}
 	return nil
 }
 func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) {
+	if a.Provider == "openrouter" {
+		if a.Key == "" {
+			return nil, stageError("ai_not_configured", "Set OPENROUTER_API_KEY on the backend to enable Gemma through OpenRouter.")
+		}
+		if !strings.HasPrefix(a.Key, "sk-or-") || strings.ContainsAny(a.Key, "* \r\n") || strings.Contains(a.Key, "...") {
+			return nil, stageError("ai_key_incomplete", "The backend OpenRouter key is incomplete or invalid.")
+		}
+		if p, ok := payload.(map[string]any); ok {
+			// Keep the selected model; never silently route to a paid fallback.
+			p["provider"] = map[string]any{"require_parameters": true, "data_collection": "deny", "max_price": map[string]any{"prompt": 0, "completion": 0}}
+			if tools, ok := p["tools"].([]any); ok && len(tools) > 0 {
+				return nil, stageError("web_search_not_enabled", "Live web research is not enabled for this free OpenRouter configuration. Upload the SBC directly or continue with limited insurance context.")
+			}
+			// Explicitly select free PDF processing instead of paid default OCR.
+			if input, ok := p["input"].([]any); ok {
+				for _, message := range input {
+					m, _ := message.(map[string]any)
+					content, _ := m["content"].([]any)
+					for _, part := range content {
+						c, _ := part.(map[string]any)
+						if c["type"] == "input_file" {
+							p["plugins"] = []any{map[string]any{"id": "file-parser", "pdf": map[string]any{"engine": "cloudflare-ai"}}}
+						}
+					}
+				}
+			}
+		}
+	}
 	if a.Key == "" {
 		return nil, stageError("openai_not_configured", "OPENAI_API_KEY is not configured; automated reading and search could not run.")
 	}
@@ -132,12 +168,23 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	}
 	req.Header.Set("Authorization", "Bearer "+a.Key)
 	req.Header.Set("Content-Type", "application/json")
+	if a.Provider == "openrouter" {
+		req.Header.Set("HTTP-Referer", "https://clearcare.pages.dev")
+		req.Header.Set("X-Title", "ClearCare")
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, stageError("openai_unavailable", "The OpenAI request timed out or could not connect.")
+		return nil, stageError("ai_unavailable", "The AI provider request timed out or could not connect.")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if a.Provider == "openrouter" {
+			message := "OpenRouter could not complete the request. Check the key, free-model quota, availability and privacy-compatible provider access."
+			if resp.StatusCode == 429 {
+				message = "OpenRouter's free-model rate limit was reached. Please retry later."
+			}
+			return nil, stageError(fmt.Sprintf("openrouter_http_%d", resp.StatusCode), message)
+		}
 		if resp.StatusCode == 401 {
 			return nil, stageError("openai_http_401", "OpenAI rejected the API key. Set a valid OpenAI secret API key in the backend terminal, restart the backend, and retry. A Supabase key cannot authenticate with OpenAI.")
 		}
@@ -149,13 +196,13 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	}
 	var out map[string]any
 	if json.Unmarshal(data, &out) != nil {
-		return nil, stageError("invalid_ai_output", "OpenAI returned an invalid response.")
+		return nil, stageError("invalid_ai_output", "The AI provider returned an invalid response.")
 	}
 	return out, nil
 }
 func responseText(response map[string]any) (string, []string, error) {
 	if response["status"] != "completed" {
-		return "", nil, stageError("incomplete_ai_response", "OpenAI did not complete this step; no incomplete output was accepted.")
+		return "", nil, stageError("incomplete_ai_response", "The AI provider did not complete this step; no incomplete output was accepted.")
 	}
 	var text strings.Builder
 	sources := []string{}
@@ -177,7 +224,7 @@ func responseText(response map[string]any) (string, []string, error) {
 		for _, part := range content {
 			p, _ := part.(map[string]any)
 			if p["type"] == "refusal" {
-				return "", nil, stageError("ai_refusal", "OpenAI declined to process this document.")
+				return "", nil, stageError("ai_refusal", "The AI provider declined to process this document.")
 			}
 			if p["type"] == "output_text" {
 				v, _ := p["text"].(string)
@@ -196,7 +243,7 @@ func responseText(response map[string]any) (string, []string, error) {
 		}
 	}
 	if strings.TrimSpace(text.String()) == "" {
-		return "", nil, stageError("empty_ai_response", "OpenAI returned no usable content.")
+		return "", nil, stageError("empty_ai_response", "The AI provider returned no usable content.")
 	}
 	return text.String(), sources, nil
 }
