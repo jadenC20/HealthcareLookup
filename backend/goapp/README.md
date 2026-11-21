@@ -2,7 +2,9 @@
 
 Run `go run .` from this directory. Go 1.24+ is required. The default listener is `127.0.0.1:8000`; database and data paths are `../clearcare.db` and `../data`.
 
-`CLEARCARE_ADDR` can select another loopback address. The connected frontend uses verified Supabase bearer identities when configured; legacy cookie accounts and CSRF remain supported. `POST /documents/extract`, `POST /bills/ai-review`, and `GET /care/recommendations` add the frontend branch's consent-based healthcare flows alongside the product job APIs.
+`CLEARCARE_ADDR` can select another address; `CLEARCARE_HOST` plus `PORT`/`CLEARCARE_PORT` are the hosted alternative. Local persistence is selected with `CLEARCARE_STORE`: `local-sqlite` is the persistent default and `memory` starts with an empty in-memory database. The Supabase/Postgres and object-storage adapters are not implemented yet.
+
+The connected frontend uses verified Supabase bearer identities when configured; legacy cookie accounts and CSRF remain supported. `POST /documents/extract`, `POST /bills/ai-review`, and `GET /care/recommendations` add the frontend branch's consent-based healthcare flows alongside the product job APIs.
 
 Product packages are [billreview](billreview/), [caresearch](caresearch/) and [prescription](prescription/). Shared support lives in [account](account/), [insurance](insurance/) and [evidence](evidence/). [main.go](main.go) wires the API. Go is the only backend implementation.
 

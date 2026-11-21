@@ -16,27 +16,13 @@ import (
 	"github.com/jung-kurt/gofpdf"
 	"golang.org/x/crypto/scrypt"
 	"io"
-	_ "modernc.org/sqlite"
 	"net/http"
 	"net/mail"
 	"os"
 	"strings"
-	"sync"
 	"time"
 )
 
-type Service struct {
-	db         *sql.DB
-	mu         sync.Mutex
-	attempts   map[string][]time.Time
-	insurance  *insurance.Engine
-	jobsMu     sync.Mutex
-	jobCancels map[string]context.CancelFunc
-	jobSem     chan struct{}
-	jobWG      sync.WaitGroup
-	supabase   *supabaseVerifier
-	healthAI   healthcareAI
-}
 type User struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
@@ -56,34 +42,6 @@ type review struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-func Open(path string) (*Service, error) {
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password TEXT NOT NULL, city TEXT DEFAULT '', plan TEXT DEFAULT ''); CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, csrf TEXT NOT NULL, expires REAL NOT NULL); CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS insurance_cards (user_id TEXT PRIMARY KEY, content_type TEXT NOT NULL, data BLOB NOT NULL, updated TEXT NOT NULL);`)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS insurance_workflows (user_id TEXT PRIMARY KEY, revision TEXT NOT NULL, result TEXT NOT NULL, document BLOB); CREATE TABLE IF NOT EXISTS ai_review_analyses (user_id TEXT NOT NULL, request_hash TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(user_id,request_hash));`)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	ai := insurance.NewOpenAI()
-	s := &Service{db: db, attempts: map[string][]time.Time{}, insurance: &insurance.Engine{AI: ai, Catalog: insurance.LoadCatalog(os.Getenv("CLEARCARE_PLAN_CATALOG")), Fetcher: insurance.NewFetcher()}, jobCancels: map[string]context.CancelFunc{}, jobSem: make(chan struct{}, 2), supabase: newSupabaseVerifier(), healthAI: ai}
-	if err := s.initFeatures(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := s.pruneExpired(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return s, nil
-}
 func (s *Service) Close() error {
 	s.jobsMu.Lock()
 	for _, cancel := range s.jobCancels {

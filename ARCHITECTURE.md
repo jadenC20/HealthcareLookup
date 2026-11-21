@@ -2,6 +2,47 @@
 
 One Go process implements three product services: Bill Review, Care Search and Prescription Comparison. Accounts, insurance import and evidence handling are shared support. The frontend is unchanged by this implementation.
 
+## Technology stack
+
+| Layer | Current implementation | Hosted target |
+|---|---|---|
+| Frontend | Vanilla HTML, CSS and browser JavaScript | Cloudflare Pages Free |
+| Same-origin API routing | Local Node `server.mjs` proxy | Cloudflare Pages Function forwarding `/api/*` |
+| Backend | Go 1.24+, standard-library `net/http` router | Render Free Go web service |
+| Relational data | SQLite through `database/sql` and `modernc.org/sqlite` | Supabase Postgres through `pgx` |
+| Document storage | Insurance cards and SBC documents stored as SQLite BLOBs; bill uploads processed in memory | Private Supabase Storage bucket for cards and SBC files; bill uploads remain transient |
+| Background processing | In-process Go jobs with persisted status, progress, cancellation and duplicate suppression | Same Go job coordinator on Render, with job state in Supabase Postgres |
+| AI | OpenAI Responses API for structured extraction, sourced research and constrained explanation | OpenAI API called only by the Go backend |
+| Public healthcare data | CMS NPI Registry, CMS fee/coding sources, local reference imports and NLM RxNorm | Same sources, reached from the Go backend |
+| Authentication | Server-managed sessions, HttpOnly cookies and CSRF tokens | Same model through the same-origin Pages proxy with Secure cookies |
+| Delivery and TLS | Local development listener | Cloudflare edge for the frontend and Render-managed TLS for the backend origin |
+
+The hosted target is a deployment decision, not the current persistence implementation. The service now has an explicit `SQLStore` boundary, environment-driven listener/origin configuration, a persistent local SQLite adapter and a disposable in-memory local mode. The Supabase/Postgres adapter, Supabase Storage implementation and hosted deployment are intentionally deferred until local behavior is verified. Supabase Auth is not part of the first deployment; the existing Go session model remains authoritative.
+
+## Target hosted deployment graph
+
+```mermaid
+flowchart LR
+    Browser[Browser] --> Pages[Cloudflare Pages<br/>HTML, CSS, JavaScript]
+    Pages --> Proxy[Pages Function<br/>same-origin /api proxy]
+    Proxy --> Go[Render Free<br/>Go API]
+    Go --> Postgres[(Supabase Postgres<br/>accounts, jobs, results)]
+    Go --> Storage[(Supabase Storage<br/>private cards and SBCs)]
+    Go --> OpenAI[OpenAI Responses API]
+    Go --> CMS[CMS and NPI sources]
+    Go --> RxNorm[NLM RxNorm]
+```
+
+The Pages Function is a thin reverse proxy; product logic, secrets and database credentials stay in the Go service. Keeping browser traffic on the Pages origin avoids cross-site session-cookie behavior. Render can restart or sleep a free service, so startup changes unfinished jobs to `interrupted`; the client can poll job state and retry.
+
+## Stateless migration boundary
+
+Persistent business state is accessed through `account.SQLStore`. `local-sqlite` remains the default development adapter so accounts, insurance workflows, jobs and saved results survive local restarts. `memory` uses an in-memory SQLite database for disposable local runs and leaves no database file. Product handlers do not select a database driver.
+
+Runtime networking is configured through `CLEARCARE_HOST`, `PORT` or `CLEARCARE_PORT`, and `CLEARCARE_ALLOWED_ORIGINS`. Local defaults remain loopback-only. A hosted process can bind to `0.0.0.0:$PORT` and accept only the Cloudflare Pages origin without changing source code.
+
+This phase does not claim complete stateless execution. Request throttling and active cancellation handles remain process-local, and running AI jobs cannot move between instances. Durable job records allow startup to mark abandoned work `interrupted`, but a later hosted phase should move execution leases and rate limits to shared infrastructure or Cloudflare Workflows before horizontal scaling. The future Supabase adapter must provide PostgreSQL schema initialization, SQL placeholder translation and private object storage for card/SBC bytes.
+
 ## Backend graph
 
 ```mermaid

@@ -12,15 +12,21 @@ Export environment variables through your shell or process manager. [.env.exampl
 | OPENAI_MODEL | gpt-4.1 | Structured PDF/image extraction and SBC interpretation |
 | OPENAI_SEARCH_MODEL | OPENAI_MODEL | Web search and structured candidate extraction |
 | CLEARCARE_PLAN_CATALOG | unset | Optional local CMS/normalized CSV; see [data guide](../backend/DATA_COLLECTION.md) |
+| CLEARCARE_STORE | local-sqlite | `local-sqlite` for persistent development or `memory` for disposable local runs |
 | CLEARCARE_DB | ../clearcare.db | SQLite accounts, reviews, cards, insurance workflow and SBC bytes |
 | CLEARCARE_DATA_DIR | ../data | Provider and procedure-price CSV directory |
 | CLEARCARE_DEMO | unset | `1` selects the care data directory's `demo` subdirectory |
 | CLEARCARE_SECURE_COOKIES | unset | `1` enables Secure session cookies; use with HTTPS |
+| CLEARCARE_HOST | 127.0.0.1 | API bind host; hosted containers normally use `0.0.0.0` |
+| PORT / CLEARCARE_PORT | 8000 | API bind port; standard hosting `PORT` takes precedence |
+| CLEARCARE_ALLOWED_ORIGINS | Local frontend/API origins | Comma-separated exact browser origins accepted by the API |
 | CLEARCARE_GO | go | Go executable used by the root development launcher |
 | CLEARCARE_LIVE_TEST | unset | `1` opts into billable live insurance tests |
 | CLEARCARE_RESULT_RETENTION_DAYS | 90 | Retain completed product results/jobs for 1–3650 days |
 
 Demo mode does **not** disable OpenAI requests. Leave the key unset to exercise explicit unavailable/partial states without external AI calls. A catalog change or environment change requires a backend restart.
+
+Local development defaults to the persistent SQLite adapter. Set `CLEARCARE_STORE=memory` for a clean disposable run; all accounts and results then disappear when the process exits. Other store names fail during startup so an incomplete Supabase configuration cannot silently fall back to local disk. The Supabase/Postgres adapter is a later phase.
 
 ## Requests and recovery
 
