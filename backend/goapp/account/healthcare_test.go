@@ -76,8 +76,8 @@ func TestCareAIUsesStoredPlanAndOnlySourcedListings(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "providers.csv"), []byte("provider_id,name,city,specialty,source_url,retrieved_date\nP1,Clinic,Philadelphia,Imaging,https://clinic.example,2026-11-21\n"), 0600)
 	os.WriteFile(filepath.Join(dir, "service_prices.csv"), []byte("provider_id,procedure_code,price,price_type,includes,insurance_status,source_url,retrieved_date\nP1,73721,75,discounted_cash,facility,unknown,https://clinic.example/prices,2026-11-21\n"), 0600)
 	handler := s.CareRecommendations(caresearch.Load(dir))
-	for _, code := range []string{"73721", "missing"} {
-		r := httptest.NewRequest("GET", "/care/recommendations?procedure_code="+code+"&ai_consent=true", nil)
+	for _, query := range []string{"Imaging", "", "missing"} {
+		r := httptest.NewRequest("GET", "/care/recommendations?q="+query+"&ai_consent=true", nil)
 		r.Header.Set("Authorization", "Bearer first")
 		w := httptest.NewRecorder()
 		handler(w, r)
@@ -89,11 +89,11 @@ func TestCareAIUsesStoredPlanAndOnlySourcedListings(t *testing.T) {
 		if data["coverage_status"] != "unverified" {
 			t.Fatal("coverage was invented")
 		}
-		if code == "missing" && !strings.Contains(w.Body.String(), "no_data") {
+		if query == "missing" && !strings.Contains(w.Body.String(), "no_data") {
 			t.Fatal("empty data must not invent listings")
 		}
 	}
-	if ai.calls != 1 || ai.context.PlanLabel != "Stored plan" {
+	if ai.calls != 2 || ai.context.PlanLabel != "Stored plan" {
 		t.Fatal("plan not used or AI called on empty catalog", ai)
 	}
 }

@@ -184,10 +184,6 @@ func (s *Service) CareRecommendations(care *caresearch.Service) http.HandlerFunc
 			return
 		}
 		q := r.URL.Query()
-		if q.Get("procedure_code") == "" {
-			fail(w, 422, "Enter a procedure code for insurance-aware price guidance.")
-			return
-		}
 		if q.Get("city") == "" {
 			q.Set("city", user.City)
 		}

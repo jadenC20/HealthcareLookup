@@ -50,7 +50,7 @@ Requests: `POST /documents/extract`, `POST /bills/ai-review`; basic checks use `
 
 ## Insurance-aware care search
 
-Enter a procedure code, city (defaults to saved city when omitted), and price type. With plan explanations enabled and consent, `GET /care/recommendations` loads sourced backend records and the signed-in user's saved plan and documented benefits. OpenRouter explains relevant restrictions and questions, citing only returned listing and benefit indices. It does not generate prices or determine network/individual coverage. Empty datasets return a no-data state without inventing providers. Demo rows are excluded unless explicitly enabled. Standalone provider and price browsing remain available.
+Describe the service or care you need in plain language, enter a city (defaults to the saved city when omitted), and choose a price type. Procedure codes are not part of the user workflow. With plan explanations enabled and consent, `GET /care/recommendations` loads sourced backend records and the signed-in user's saved plan and documented benefits. Cloudflare Workers AI explains relevant restrictions and questions, citing only returned listing and benefit indices. It does not generate prices or determine network/individual coverage. Empty datasets return a no-data state without inventing providers. Demo rows are excluded unless explicitly enabled. Standalone provider and price browsing remain available.
 
 The directory still needs sourced `providers.csv` and `service_prices.csv` records. `CLEARCARE_DEMO=1` selects the backend's explicit demo dataset. An API key does not supply real provider pricing.
 

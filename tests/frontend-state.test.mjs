@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
-import {validateUpload} from '../api-client.mjs';
-import {insuranceView} from '../insurance-view.mjs';
+import {validateUpload,priceView} from '../api-client.mjs';
+import {insuranceView,careAdviceHTML} from '../insurance-view.mjs';
 
 const source=(await readFile(new URL('../connected.mjs',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace(/\ninitialize\(\);\s*$/,'');
 function node(){return {isConnected:true,innerHTML:'',textContent:'',disabled:false,childNodes:[],dataset:{},classList:{add(){},remove(){},toggle(){}},append(){},prepend(){},before(){},remove(){},setAttribute(){},removeAttribute(){},insertAdjacentHTML(){},addEventListener(){},querySelectorAll(){return [];},querySelector(){return null;}};}
 function harness(request=async()=>({}),elements=new Map()){
  const timers=[],dialog={...node(),open:false,close(){this.open=false;this.closed=true;}},main=node();
- const context=vm.createContext({console,URL,FormData,validateUpload,insuranceView,Promise,Date,Number,Map,Set,Object,String,JSON,Error,document:{querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[],createElement:()=>node()},window:{addEventListener(){}},dialog,main,activePage:'',escaped:String,notify(){},route(){},render(){},titles:{},showProfile(){},showBenefits(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},createSupabaseAuth:()=>({config:{configured:true},getAccessToken:async()=>null}),createApi:()=>({request,clearSession(){context.sessionCleared=true;},setSession(){}})});
+ const context=vm.createContext({console,URL,URLSearchParams,FormData,validateUpload,priceView,insuranceView,careAdviceHTML,Promise,Date,Number,Map,Set,Object,String,JSON,Error,document:{querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[],createElement:()=>node()},window:{addEventListener(){}},dialog,main,activePage:'',escaped:String,notify(){},route(){},render(){},titles:{},showProfile(){},showBenefits(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},createSupabaseAuth:()=>({config:{configured:true},getAccessToken:async()=>null}),createApi:()=>({request,clearSession(){context.sessionCleared=true;},setSession(){}})});
  vm.runInContext(source,context);
  const run=code=>vm.runInContext(code,context);
  run("user={id:'owner'};cloudUser={id:'owner'};");
@@ -70,5 +70,32 @@ test('plan confirmation preserves an SBC coverage year and leaves an unknown yea
   h.context.target=target;h.context.documentDetails=documentDetails;
   h.run("renderInsurance(target,{revision:'r1',result:{details_confirmed:false,details:{},document_details:documentDetails}},{})");
   assert.equal(form.elements.year.value,expected);
+ }
+});
+
+test('profile care tools search plain-language services for prices, AI guidance, and providers',async()=>{
+ for(const [mode,useAI,endpoint] of [['prices',false,'/prices/compare'],['prices',true,'/care/recommendations'],['providers',false,'/providers']]){
+  const paths=[],host=node(),form={...node(),values:{q:' MRI knee ',city:'Philadelphia',specialty:'radiology',price_type:'discounted_cash',...(useAI?{use_plan_ai:'on',ai_consent:'on'}:{})}},nodes=new Map([['form',form]]);
+  host.querySelector=selector=>{if(!nodes.has(selector))nodes.set(selector,node());return nodes.get(selector);};
+  const h=harness(async path=>{paths.push(path);return {results:[]};});h.context.document.createElement=()=>host;h.context.container=node();h.context.FormData=class{constructor(form){return Object.entries(form.values)[Symbol.iterator]();}};
+  h.run('careProfileSettings(container)');await form.onsubmit({preventDefault(){},target:form,submitter:{value:mode}});
+  assert.equal(paths.length,1);const query=new URL(paths[0],'https://example.test');assert.equal(query.pathname,endpoint);assert.equal(query.searchParams.get('q'),'MRI knee');assert.equal(query.searchParams.has('procedure_code'),false);
+  assert.match(host.innerHTML,/Service or care needed/);assert.doesNotMatch(host.innerHTML,/name="(?:procedure_code|code)"|Procedure code|CPT|HCPCS/);
+ }
+});
+
+test('overview cost estimator submits a service description without a procedure code',async()=>{
+ const paths=[],target=node(),form={...node(),values:{q:'blood test',city:'Philadelphia',price_type:'discounted_cash'}},nodes=new Map([['#overview-estimate',form]]);
+ target.querySelector=selector=>{if(!nodes.has(selector))nodes.set(selector,node());return nodes.get(selector);};form.querySelector=()=>node();
+ const h=harness(async path=>{paths.push(path);return {results:[]};},new Map([['#live-page-content',target]]));h.context.FormData=class{constructor(form){return Object.entries(form.values)[Symbol.iterator]();}};
+ await h.run("activePage='overview';renderOverview()");await form.onsubmit({preventDefault(){},target:form});
+ const query=new URL(paths.find(path=>path.startsWith('/prices/compare')),'https://example.test');assert.equal(query.searchParams.get('q'),'blood test');assert.equal(query.searchParams.has('procedure_code'),false);
+ assert.match(target.innerHTML,/Service or care needed/);assert.doesNotMatch(target.innerHTML,/Procedure code|name="procedure_code"/);
+});
+
+test('procedure-code fields and sample codes are absent from the entire web interface',async()=>{
+ for(const path of ['app.js','connected.mjs','integration.js','pages/overview.html','pages/care.html','pages/bill.html','pages/prescriptions.html']){
+  const text=await readFile(new URL('../'+path,import.meta.url),'utf8');
+  assert.doesNotMatch(text,/procedure[_ -]?code|\bCPT\b|\bHCPCS\b|Billing code|data-key="code"|name="code"|\$\{[^}]*field\('code'/i,path);
  }
 });

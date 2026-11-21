@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type row = map[string]any
@@ -86,7 +87,7 @@ func Load(dir string) *Service {
 			status = "unknown"
 			r["insurance_status"] = status
 		}
-		if !known[str(r["provider_id"])] || str(r["procedure_code"]) == "" || e != nil || math.IsNaN(price) || math.IsInf(price, 0) || price < 0 || (typ != "gross_charge" && typ != "discounted_cash" && typ != "payer_negotiated" && typ != "other") || (typ == "payer_negotiated" && str(r["plan_name"]) == "") || (status != "confirmed" && status != "unverified" && status != "unknown") || !validSource(r) {
+		if !known[str(r["provider_id"])] || (str(r["procedure_code"]) == "" && str(r["description"]) == "") || e != nil || math.IsNaN(price) || math.IsInf(price, 0) || price < 0 || (typ != "gross_charge" && typ != "discounted_cash" && typ != "payer_negotiated" && typ != "other") || (typ == "payer_negotiated" && str(r["plan_name"]) == "") || (status != "confirmed" && status != "unverified" && status != "unknown") || !validSource(r) {
 			s.errors = append(s.errors, fmt.Sprintf("service_prices.csv row %d: invalid provider, price, type, status, source, or date", i+2))
 			continue
 		}
@@ -118,10 +119,6 @@ func (s *Service) Providers(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Service) Prices(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if q.Get("procedure_code") == "" {
-		http.Error(w, `{"detail":"procedure_code is required"}`, 422)
-		return
-	}
 	out, warnings := s.Compare(q)
 	jsonOut(w, row{"results": out, "warnings": warnings})
 }
@@ -133,12 +130,20 @@ func (s *Service) Compare(q url.Values) ([]map[string]any, []string) {
 	types := map[string]bool{}
 	includes := map[string]bool{}
 	missing, demo := false, false
+	code := strings.TrimSpace(q.Get("procedure_code"))
+	query := priceSearchTokens(q.Get("q"))
+	if strings.TrimSpace(q.Get("q")) != "" {
+		code = ""
+	}
 	for _, price := range s.prices {
-		if str(price["procedure_code"]) != q.Get("procedure_code") || q.Get("price_type") != "" && str(price["price_type"]) != q.Get("price_type") {
+		if code != "" && !strings.EqualFold(str(price["procedure_code"]), code) || q.Get("price_type") != "" && str(price["price_type"]) != q.Get("price_type") {
 			continue
 		}
 		for _, p := range s.providers {
 			if str(p["provider_id"]) != str(price["provider_id"]) || q.Get("city") != "" && !strings.EqualFold(str(p["city"]), q.Get("city")) {
+				continue
+			}
+			if !matchesPriceSearch(query, str(price["description"])+" "+str(price["procedure_code"])+" "+str(p["specialty"])+" "+str(p["name"])) {
 				continue
 			}
 			n, e := strconv.ParseFloat(strings.ReplaceAll(strings.TrimPrefix(str(price["price"]), "$"), ",", ""), 64)
@@ -166,7 +171,7 @@ func (s *Service) Compare(q url.Values) ([]map[string]any, []string) {
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
+	sort.SliceStable(out, func(i, j int) bool {
 		a, b := str(out[i]["price_type"]), str(out[j]["price_type"])
 		if a != b {
 			return a < b
@@ -186,5 +191,31 @@ func (s *Service) Compare(q url.Values) ([]map[string]any, []string) {
 	if demo {
 		warnings = append(warnings, "Some results are demonstration data, not real prices.")
 	}
+	if len(out) > 100 {
+		out = out[:100]
+		warnings = append(warnings, "Showing the first 100 matching prices. Narrow the service or city to see more specific results.")
+	}
 	return out, warnings
+}
+
+func priceSearchTokens(text string) []string {
+	return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
+
+func matchesPriceSearch(query []string, text string) bool {
+	if len(query) == 0 {
+		return true
+	}
+	available := map[string]bool{}
+	for _, token := range priceSearchTokens(text) {
+		available[token] = true
+	}
+	for _, token := range query {
+		if !available[token] {
+			return false
+		}
+	}
+	return true
 }
