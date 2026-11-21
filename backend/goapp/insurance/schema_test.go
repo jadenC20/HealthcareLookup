@@ -60,3 +60,26 @@ func TestValidateJSONSchemaEnumsCompareJSONValues(t *testing.T) {
 		t.Fatal("numeric enum equality lost precision")
 	}
 }
+
+func TestValidateJSONSchemaMinimumArrayItemsAndAllowedReferences(t *testing.T) {
+	schema := map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"L1", "L2"}}}
+	for _, data := range []string{`["L1"]`, `["L2","L1"]`} {
+		if !validateJSONSchema([]byte(data), schema) {
+			t.Errorf("valid references rejected: %s", data)
+		}
+	}
+	for _, data := range []string{`[]`, `["invented"]`, `[null]`, `[1]`} {
+		if validateJSONSchema([]byte(data), schema) {
+			t.Errorf("missing or malformed references accepted: %s", data)
+		}
+	}
+	for _, minimum := range []any{-1, 0.5, "1", true, nil} {
+		malformed := map[string]any{"type": "array", "minItems": minimum, "items": stringSchema()}
+		if validateJSONSchema([]byte(`["L1"]`), malformed) {
+			t.Errorf("malformed minItems accepted: %#v", minimum)
+		}
+	}
+	if !validateJSONSchema([]byte(`[]`), map[string]any{"type": "array", "minItems": 0, "items": stringSchema()}) {
+		t.Fatal("nonnegative zero minimum rejected")
+	}
+}

@@ -37,7 +37,7 @@ func decodeSchemaJSON(data []byte, value *any) bool {
 func validBoundedSchema(s map[string]any) bool {
 	for key := range s {
 		switch key {
-		case "type", "properties", "required", "additionalProperties", "enum", "items":
+		case "type", "properties", "required", "additionalProperties", "enum", "items", "minItems":
 		default:
 			return false
 		}
@@ -80,6 +80,16 @@ func validBoundedSchema(s map[string]any) bool {
 	if items, exists := s["items"]; exists {
 		child, ok := items.(map[string]any)
 		if !ok || !validBoundedSchema(child) {
+			return false
+		}
+	}
+	if minimum, exists := s["minItems"]; exists {
+		number, ok := minimum.(json.Number)
+		if !ok {
+			return false
+		}
+		value, err := number.Int64()
+		if err != nil || value < 0 {
 			return false
 		}
 	}
@@ -177,6 +187,12 @@ func matchesBoundedSchema(value any, s map[string]any) bool {
 		}
 	}
 	if array, ok := value.([]any); ok {
+		if minimum, exists := s["minItems"]; exists {
+			count, _ := minimum.(json.Number).Int64()
+			if int64(len(array)) < count {
+				return false
+			}
+		}
 		if items, exists := s["items"]; exists {
 			for _, child := range array {
 				if !matchesBoundedSchema(child, items.(map[string]any)) {

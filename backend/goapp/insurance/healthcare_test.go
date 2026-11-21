@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -59,5 +60,45 @@ func TestCareGuidanceRejectsInventedListingsBenefitsAndFinancialClaims(t *testin
 		if (err == nil) != shouldPass {
 			t.Fatal(item, err)
 		}
+	}
+}
+
+func TestCloudflareBillExplanationSchemaRequiresExistingLineReferences(t *testing.T) {
+	req := map[string]any{"bill": map[string]any{"lines": []any{map[string]any{"line_id": "L2"}, map[string]any{"line_id": "L1"}, map[string]any{"line_id": "L1"}}}}
+	for _, references := range [][]string{{"L1"}, {}, {"invented"}} {
+		out := BillAdvice{Summary: "Review the bill", Items: []BillAdviceItem{{Lines: references, Explanation: "Confirm this item", Question: "What is included?"}}, Inquiry: "Please itemize.", Limitations: []string{}}
+		ai := cloudflareFixtureAI(t, fixtureResponse(t, out), func(payload map[string]any) {
+			format := payload["text"].(map[string]any)["format"].(map[string]any)
+			schema := format["schema"].(map[string]any)
+			properties := schema["properties"].(map[string]any)
+			item := properties["items"].(map[string]any)["items"].(map[string]any)
+			lineIDs := item["properties"].(map[string]any)["line_ids"].(map[string]any)
+			if lineIDs["minItems"] != float64(1) || !reflect.DeepEqual(lineIDs["items"].(map[string]any)["enum"], []any{"L1", "L2"}) {
+				t.Errorf("grounded references were not constrained in the generation schema: %#v", lineIDs)
+			}
+			if !strings.Contains(payload["instructions"].(string), "general advice and missing-evidence notes in limitations") {
+				t.Error("general advice was not directed outside line-specific items")
+			}
+		})
+		_, err := ai.ReviewBill(context.Background(), req, map[string]any{}, HealthContext{})
+		if (err == nil) != (len(references) == 1 && references[0] == "L1") {
+			t.Fatalf("reference validation result: references=%v err=%v", references, err)
+		}
+	}
+}
+
+func TestBillExplanationWithoutGroundedItemsCanReturnLimitations(t *testing.T) {
+	req := map[string]any{"bill": map[string]any{"lines": []any{map[string]any{"line_id": "L1"}}}}
+	out := BillAdvice{Summary: "More evidence is needed", Items: []BillAdviceItem{}, Inquiry: "Please send itemized detail.", Limitations: []string{"Confirm the bill with the provider."}}
+	ai := cloudflareFixtureAI(t, fixtureResponse(t, out), nil)
+	if _, err := ai.ReviewBill(context.Background(), req, map[string]any{}, HealthContext{}); err != nil {
+		t.Fatalf("general advice required fabricated citations: %v", err)
+	}
+}
+
+func TestBillExplanationRejectsMissingInputLineIdentifiers(t *testing.T) {
+	ai := &OpenAI{}
+	if _, err := ai.ReviewBill(context.Background(), map[string]any{"bill": map[string]any{"lines": []any{map[string]any{"description": "Visit"}}}}, map[string]any{}, HealthContext{}); err == nil {
+		t.Fatal("missing input identifiers reached AI generation")
 	}
 }
