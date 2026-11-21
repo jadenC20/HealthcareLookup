@@ -3,12 +3,15 @@ package caresearch
 import (
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type row map[string]any
@@ -57,6 +60,37 @@ func Load(dir string) *Service {
 		s.prices = []row{}
 		s.errors = append(s.errors, err.Error())
 	}
+	validProviders := []row{}
+	known := map[string]bool{}
+	validSource := func(r row) bool {
+		_, e := time.Parse("2006-01-02", str(r["retrieved_date"]))
+		return str(r["source_url"]) != "" && e == nil
+	}
+	for i, r := range s.providers {
+		id := str(r["provider_id"])
+		if id == "" || str(r["name"]) == "" || !validSource(r) || known[id] {
+			s.errors = append(s.errors, fmt.Sprintf("providers.csv row %d: invalid or duplicate provider, source, or date", i+2))
+			continue
+		}
+		known[id] = true
+		validProviders = append(validProviders, r)
+	}
+	s.providers = validProviders
+	validPrices := []row{}
+	for i, r := range s.prices {
+		price, e := strconv.ParseFloat(strings.ReplaceAll(strings.TrimPrefix(str(r["price"]), "$"), ",", ""), 64)
+		typ, status := str(r["price_type"]), str(r["insurance_status"])
+		if status == "" {
+			status = "unknown"
+			r["insurance_status"] = status
+		}
+		if !known[str(r["provider_id"])] || str(r["procedure_code"]) == "" || e != nil || math.IsNaN(price) || math.IsInf(price, 0) || price < 0 || (typ != "gross_charge" && typ != "discounted_cash" && typ != "payer_negotiated" && typ != "other") || (typ == "payer_negotiated" && str(r["plan_name"]) == "") || (status != "confirmed" && status != "unverified" && status != "unknown") || !validSource(r) {
+			s.errors = append(s.errors, fmt.Sprintf("service_prices.csv row %d: invalid provider, price, type, status, source, or date", i+2))
+			continue
+		}
+		validPrices = append(validPrices, r)
+	}
+	s.prices = validPrices
 	return s
 }
 func jsonOut(w http.ResponseWriter, v any) {

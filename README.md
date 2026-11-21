@@ -1,56 +1,76 @@
 # ClearCare
 
-Local frontend and FastAPI backend for HealthcareLookup. Documents are processed on this machine; no cloud extraction or AI service is used.
+ClearCare helps users review medical bills, find suitable doctors, and find less expensive prescribed medicine. AI is integral to the intended experience: it reads documents and explains evidence. Pricing and coverage conclusions must come from identifiable sources, not model memory.
 
-## Run
+The active backend is Go. This iteration implements the **insurance card → plan discovery → Summary of Benefits and Coverage (SBC) → cited benefit interpretation** backend workflow. No frontend work was included in this iteration. The existing profile can upload a card, but its old text and controls do not yet expose the automated workflow, candidate selection, or cautions. Use the API described below to exercise the complete backend.
 
-Requires Node.js 20+, Python 3.10+, and a local Python virtual environment.
+## Product and implementation status
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements-lock.txt
-npm ci
-node backend/setup-ocr.mjs
+| Area | Intended experience | Current implementation |
+|---|---|---|
+| Bill Review | Upload bill/invoice/receipt image or PDF, optionally add an EOB beside it; AI extracts charges and compares them with grounded references | Manual input, deterministic checks, saved reviews, and PDF export. Bill extraction and reference-based over/undercharge estimation are not implemented |
+| Care Search | Find the best-fit doctor using the user's profile and preferences | CSV-backed provider directory and procedure-price comparison; personalized AI ranking is not implemented |
+| Prescription Comparison | Find cheaper prescribed medicine | Not implemented; the existing UI displays an availability notice |
+| Insurance profile | Upload a card, automatically find an SBC, interpret benefits, expose uncertainty | Implemented backend with OpenAI, optional CMS catalogue, web search fallback, candidate selection, manual SBC upload, persistence, citations, and structured cautions |
+| Accounts | Private saved information and local sessions | Registration, login/logout, profile, saved reviews, deletion, PDF reports |
+
+See [the product specification](docs/PRODUCT.md) for confirmed decisions and unresolved product questions. See [architecture](ARCHITECTURE.md) for frontend and backend graphs.
+
+## Run locally
+
+Requires Go 1.24+ and Node.js. No Python environment or OCR installation is needed by the active backend.
+
+```sh
+# Supply your OpenAI key in the shell environment (do not commit it).
+export OPENAI_API_KEY='your-key'
+# Optional: override the model available to your API account.
+export OPENAI_MODEL='gpt-4.1'
+export OPENAI_SEARCH_MODEL='gpt-4.1'
 npm run dev -- --demo
 ```
 
-On macOS/Linux use `.venv/bin/python` for pip. The OCR setup downloads the English model once; document processing then works locally. Native Tesseract is optional (set `TESSERACT_CMD`); the Node/WASM fallback works without a system installation.
+The launcher builds a Go executable, starts it on `127.0.0.1:8000`, and starts the static frontend/API proxy on `127.0.0.1:4173`. Open http://127.0.0.1:4173. `--demo` selects fictional care-search CSVs; it does **not** mock or disable OpenAI. Insurance uploads can make paid API calls when a key is configured.
 
-Open http://127.0.0.1:4173. FastAPI runs on port 8000; the frontend proxies `/api` to it, including session cookies. Use `npm run dev` without `--demo` to load your own `backend/data/providers.csv` and `backend/data/service_prices.csv`. Demo mode uses explicitly fictional reference prices. Do not run a second server on the same ports.
+If Go is not on PATH, set `CLEARCARE_GO` to its executable. Dependencies are pinned in [go.mod](backend/goapp/go.mod) and [go.sum](backend/goapp/go.sum); the first build downloads them. The application reads process environment variables; it does not automatically load `.env` files. See [.env.example](.env.example) and [operations](docs/OPERATIONS.md).
 
-Checks: `npm run check` and `.\.venv\Scripts\python.exe -m pytest backend/tests -q`. All tests use temporary databases. `requirements-lock.txt` records the tested Python dependencies.
+To start only the backend:
 
-## Implemented
+```sh
+cd backend/goapp
+CLEARCARE_DEMO=1 go run .
+```
 
-- Responsive overview and navigation.
-- Local PDF/PNG/JPEG extraction with text PDFs and OCR for scans, 10 MB/file, 12 pages/PDF, and 20 megapixel images. Extracted bill suggestions are best-effort. EOB line columns require manual confirmation. A user must review editable fields before analysis.
-- API-backed bill checks, findings, and inquiry drafts; original files are discarded after processing.
-- Account registration, sign in/out, profile editing, private saved reviews, record deletion, and account deletion. Passwords use scrypt; sessions are hashed server-side and expire after 12 hours. Mutations require CSRF tokens; authentication attempts are throttled.
-- PDF export of the current review, saved review, or profile plus all saved reviews. No CSV/JSON export UI.
-- API-backed provider directory and procedure price comparisons with provenance and warnings. Medication pricing is not connected and is shown as unavailable.
-- Keyboard focus indicators and native dialog behavior.
+## Insurance automation
 
-## Data and integration boundaries
+1. An authenticated card upload starts extraction and plan discovery.
+2. The backend extracts public plan attributes from the card. It does not include member IDs or card images in web-search requests.
+3. It tries the configured CMS catalogue, then OpenAI web search when the catalogue cannot establish a unique exact variant.
+4. The user can correct/confirm details and select a source-backed candidate when the match is ambiguous.
+5. The backend downloads the selected public PDF, preserves its hash/source, and extracts cited benefits. A user-uploaded SBC is the fallback for unavailable documents.
+6. Every incomplete or unverifiable result carries `may_be_inaccurate`, a caution message, and step-specific missing information and recovery actions.
 
-The sample bill and demo CSVs are fictional. With custom CSVs the UI shows their source, retrieval date, and demo markers. No insurance coverage verification or medication pricing feed is connected. Extraction is local OCR and conservative pattern matching, not an AI model. The reviewed fields drive deterministic analysis. Do not commit real patient documents, database files, or credentials.
+A missing API key, unavailable model, failed search, blocked document, or unreadable field results in a stored partial result—not fabricated coverage. The API always distinguishes SBC terms from current member eligibility or deductible balances. [Complete endpoint contract and examples](docs/API.md).
 
-Saved data resides in `backend/clearcare.db` (override with `CLEARCARE_DB`). No health data is stored in browser localStorage. Original uploads and full OCR text are not retained. Exports include reviewed line items and evidence, not original documents. Account PDF exports support western text; unsupported glyphs are replaced with `?` in this prototype.
+## Storage and external processing
 
-This is a loopback-only hackathon application, not a production patient portal. Database contents are not application-encrypted. There is no email verification, password recovery, or multi-device account service. Public deployment requires HTTPS, `CLEARCARE_SECURE_COOKIES=1`, an explicit production-origin policy, protected storage/backups, operational review, and an account-recovery design. Do not expose these local development servers publicly.
+The default SQLite file is `backend/clearcare.db`. It stores accounts, hashed session tokens, saved reviews, insurance cards, lookup results, and retrieved/uploaded SBCs. `CLEARCARE_DB` overrides the path. The existing Python account tables and scrypt hashes remain readable; the new insurance workflow table is created additively. Back up existing data before switching versions.
 
-## Project layout
+Card and SBC interpretation sends document contents to OpenAI with Responses API `store: false`. This is not a promise of zero provider retention. Web search receives the public plan fields, and document retrieval contacts public source hosts. No raw provider error bodies, keys, or documents are written to application logs. Deleting a card removes its lookup and saved SBC; account deletion removes all owned card/workflow records. [Storage and deletion details](docs/OPERATIONS.md).
 
-- `index.html`: application shell and navigation
-- `styles.css`: responsive design system
-- `app.js`: views, fictional datasets, and browser interactions
-- `integration.js`: API-backed screens, account forms, extraction editor, saved records, PDF downloads
-- `server.mjs`: loopback-only static server and backend proxy
-- `dev.mjs`: starts frontend and backend together
-- `backend/bill_review/`: bill extraction, analysis, saved reviews, and reports
-- `backend/care_search/`: provider and price APIs and CSV loading
-- `backend/account/`: accounts, sessions, profile, and account export
-- `backend/main.py` and `backend/database.py`: application composition and shared SQLite storage
-- `backend/tests/`: backend tests
-- `ARCHITECTURE.md`: frontend and backend graphs and data flows
+This remains a loopback prototype, with no production compliance certification, account recovery, or live eligibility connection. Compliance work is a later project phase.
 
-No external fonts, analytics, or cloud document services are used. The one-time package/model installation needs internet access.
+## Validation
+
+```sh
+cd backend/goapp
+go test ./...
+go vet ./...
+```
+
+The default tests use synthetic inputs and simulated external services. Opt-in paid provider verification:
+
+```sh
+CLEARCARE_LIVE_TEST=1 go test ./insurance -run TestLiveOpenAI -v
+```
+
+That test sends synthetic PDFs and a public plan query, never real patient data. `npm run check` validates the existing JavaScript syntax. The previous Python source and tests remain as historical reference and are not the active backend.

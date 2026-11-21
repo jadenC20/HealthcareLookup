@@ -1,62 +1,108 @@
 # ClearCare architecture
 
-**Rewrite status:** A partial Go implementation is being developed in `backend/goapp/`. It is not wired into the application and does not yet support accounts, document extraction, saved reviews, or PDF exports. The diagrams below describe the existing Python application, not the incomplete Go implementation.
-
-ClearCare is a local-first prototype. The browser talks to a loopback Node server, which serves the frontend and proxies API calls to FastAPI. The API is organized into bill review, care search, and account services. Prescription pricing is presented as unavailable; it has no backend integration.
-
-## Frontend graph
-
-```mermaid
-flowchart TD
-    User[User] --> Shell[index.html and styles.css]
-    Shell --> App[app.js: navigation and dashboard]
-    App --> Bill[Bill review and extraction editor]
-    App --> Care[Provider and price search]
-    App --> Meds[Prescription availability notice]
-    App --> Account[Sign in, profile, saved reviews]
-    Bill & Care & Account --> Integration[integration.js: API calls and rendering]
-    Integration --> Node[server.mjs: static files and /api proxy]
-    Node --> API[FastAPI on loopback]
-```
-
-The frontend is vanilla JavaScript. `integration.js` adds API-backed screens to the shell and holds the active review in browser memory. No health data is stored in localStorage. The Node server serves an explicit asset allowlist and forwards `/api/` requests to port 8000.
+The active server is a single Go application in [backend/goapp](backend/goapp). The product features are **Bill Review, Care Search, and Prescription Comparison**. Accounts and insurance-plan import are shared capabilities. These packages are modules in one process, not separately deployed microservices.
 
 ## Backend graph
 
 ```mermaid
 flowchart TD
-    Proxy[Node /api proxy] --> Main[main.py: FastAPI, middleware, lifespan]
-    Main --> BillAPI[bill_review/api.py]
-    Main --> CareAPI[care_search/api.py]
-    Main --> AccountAPI[account/api.py]
-    BillAPI --> Extract[documents.py: PDF, image and OCR extraction]
-    Extract --> OCR[Native Tesseract or Node WASM OCR]
-    BillAPI --> Rules[models, checks and inquiry]
-    BillAPI --> Report[reports.py: PDF export]
-    AccountAPI --> Report
-    BillAPI & AccountAPI --> Auth[account/service.py: sessions and CSRF]
-    CareAPI --> Loader[care_search/loader.py]
-    CSV[Provider and price CSVs] --> Loader
-    Loader & CareAPI & BillAPI & AccountAPI & Auth --> DB[(SQLite via database.py)]
+    Client[Existing frontend or API client] --> Proxy[Node API proxy]
+    Proxy --> Router[Go HTTP router and request limits]
+    Router --> Account[account: identity, profile, reviews and reports]
+    Router --> Bills[billreview: deterministic bill and EOB checks]
+    Router --> Care[caresearch: provider and procedure-price CSV search]
+    Account --> Insurance[insurance: card to SBC workflow]
+    Insurance --> AI[OpenAI Responses: extraction and interpretation]
+    Insurance --> Catalog[Optional CMS plan catalogue CSV]
+    Insurance --> Search[OpenAI hosted web search]
+    Search --> Candidates[Source-backed plan candidates]
+    Catalog --> Candidates
+    Candidates --> Match[Exact variant or user selection]
+    Match --> Fetch[Bounded public HTTPS PDF retrieval]
+    Fetch --> AI
+    Insurance --> Result[Benefits, source hash, page citations and cautions]
+    Account --> DB[(SQLite)]
+    Result --> Account
+    Account --> PDF[Review and account PDF reports]
+    Care --> CSV[Provider and service-price CSVs]
+    Prescription[Prescription Comparison: not implemented]
 ```
 
-`dev.mjs` starts both servers on loopback. `main.py` composes the three routers, applies request middleware and CORS, initializes account tables, and loads reference data at startup. The routers retain the existing URLs:
+## Frontend graph: existing code, unchanged in this iteration
 
-| Service | Responsibilities | API paths |
-|---|---|---|
-| Bill review | Extract documents, analyze reviewed fields, manage saved reviews, generate review PDFs | `/sample`, `/documents/extract`, `/bills/analyze`, `/reviews`, `/reviews/{id}`, `/reviews/{id}/pdf`, `/reports/pdf` |
-| Care search | Load CSV reference data and query providers and prices | `/providers`, `/prices/compare`, `/data/status`, `/data/reload` (disabled) |
-| Account | Registration, sessions, profile, account deletion and account PDF | `/auth/*`, `/profile`, `/account`, `/account/pdf` |
-| Shared application | Health, middleware and SQLite connection/schema helpers | `/health` |
+```mermaid
+flowchart TD
+    Shell[index.html and styles.css] --> App[app.js navigation and dashboard]
+    App --> Integration[integration.js]
+    Integration --> BillUI[Manual bill and EOB editor]
+    Integration --> CareUI[Provider and price search]
+    Integration --> Profile[Accounts and insurance-card upload]
+    Integration --> Meds[Prescription unavailable notice]
+    BillUI & CareUI & Profile --> Proxy[server.mjs static server and API proxy]
+    Proxy --> Go[Go API]
+    Future[Future UI: candidates, corrections, SBC upload and cautions] -.-> Go
+```
 
-The account PDF uses bill review's report generator and saved-review records. Account deletion also deletes saved reviews. These are explicit cross-feature dependencies; the three folders are modules in one application, not independently deployed services.
+The frontend's existing card copy still describes lookup as unavailable. The backend now runs it, but this iteration deliberately does not update frontend files. The complete workflow can be used through the [API](docs/API.md).
 
-## Data and trust boundaries
+## Insurance processing sequence
 
-A signed-in user uploads a bill and optional EOB for local extraction. Text and suggestions return to the browser for review; original files and raw extraction text are not saved. Confirmed fields are analyzed by deterministic rules. Saving a review stores its structured request and findings in SQLite. Reports are generated on request.
+```mermaid
+sequenceDiagram
+    participant User as API client
+    participant API as Account API
+    participant DB as SQLite
+    participant Engine as Insurance engine
+    participant AI as OpenAI
+    participant Source as CMS catalogue / public document
+    User->>API: Authenticated card upload + CSRF
+    API->>DB: Save card and new processing revision
+    API->>Engine: Start bounded synchronous workflow
+    Engine->>AI: Extract card plan fields
+    Engine->>Source: Search configured plan catalogue
+    opt No unique exact catalogue match
+        Engine->>AI: Public plan search with sources
+    end
+    Engine-->>API: Candidates and cautions
+    API->>DB: Persist only if revision still current
+    API-->>User: Result + revision
+    User->>API: Confirm details or select candidate
+    API->>Engine: Continue with new guarded revision
+    Engine->>Source: Retrieve selected public PDF
+    Engine->>AI: Interpret PDF with page quotes
+    Engine-->>API: Benefits + source metadata + missing steps
+    API->>DB: Save result and document if still current
+    API-->>User: Ready-with-caution or partial result
+```
 
-Provider and price CSVs are imported at startup; demo mode uses fictional data. SQLite also holds accounts, hashed session tokens, CSRF tokens and saved reviews. Its default path is `backend/clearcare.db`, configurable with `CLEARCARE_DB`. Passwords use scrypt; the cookie is HttpOnly and SameSite Strict, with optional Secure. Authenticated mutations check CSRF. The database is not application-encrypted. There is no email recovery, coverage verification, medication feed, or cloud extraction service. See the root README for operational limitations.
+Confirmed details plus one exact CMS plan variant/year/state match can proceed through retrieval and interpretation without candidate selection. Extracted-but-unconfirmed details and web candidates require confirmation. Manual SBC upload enters at the document interpretation stage.
 
-## Verification
+## Modules and boundaries
 
-Run `npm run check` for JavaScript syntax and `.venv/bin/python -m pytest backend/tests -q` for Python tests. OCR tests require a local OCR engine or the downloaded model and Node dependencies. Python dependencies are pinned in `backend/requirements-lock.txt`; Node dependencies are pinned in `package-lock.json`.
+| Module | Responsibility |
+|---|---|
+| [main.go](backend/goapp/main.go) | HTTP route registration, loopback listener, origin policy, actual request-body limit |
+| [account/api.go](backend/goapp/account/api.go) | Sessions, CSRF, account/profile/review endpoints, card storage, reports |
+| [account/insurance.go](backend/goapp/account/insurance.go) | Insurance endpoints, persistence, revision guards, four-minute workflow deadline |
+| [insurance/workflow.go](backend/goapp/insurance/workflow.go) | Stage orchestration, deterministic matching, cautions, evidence acceptance |
+| [insurance/openai.go](backend/goapp/insurance/openai.go) | Responses API, strict JSON schemas, PDF/image input, sourced web search |
+| [insurance/catalog.go](backend/goapp/insurance/catalog.go) | Optional local CMS/normalized CSV catalogue |
+| [insurance/fetch.go](backend/goapp/insurance/fetch.go) | Public HTTPS PDF retrieval, redirect/DNS validation and size/time limits |
+| [billreview](backend/goapp/billreview) | Existing user-confirmed bill arithmetic, duplicates, vague charges, EOB checks |
+| [caresearch](backend/goapp/caresearch) | Existing CSV validation, directory and price queries |
+
+No framework or Python runtime is used by the active server. SQLite, scrypt and PDF generation use pinned Go dependencies. The historical Python packages remain for reference and are not started by [dev.mjs](dev.mjs).
+
+## Persistence and concurrency
+
+SQLite tables: `users`, `sessions`, `reviews`, `insurance_cards`, and `insurance_workflows`. Workflow rows contain an opaque revision, JSON result, and optional SBC bytes. A new card replaces the previous card and invalidates its derived result. User actions require the latest revision. A late external response cannot resurrect deleted data or overwrite a replacement card. Account deletion removes cards and workflow rows in the account transaction.
+
+The workflow is synchronous, bounded by four minutes. GET can inspect persisted processing state during a request. An abandoned processing row older than five minutes is reported as interrupted and is retryable. This is not a durable background job queue; a server restart interrupts in-flight work. Retrying does not resume an OpenAI conversation. There is no hidden retry loop that can repeatedly incur charges.
+
+## External data and limits
+
+Card/SBC bytes are sent to OpenAI; search receives only plan fields, not member identifiers or the card file. The app requests `store: false`. The server fetches public PDF sources with a 10 MB cap and 45-second HTTP timeout. OpenAI calls have 90-second timeouts. Raw external errors are reduced to stable caution codes without echoing documents or credentials.
+
+SBC results describe plan terms. They do not establish active membership, remaining deductible, network participation, or authorization for care. Citations are AI-extracted page references and quotes, retained with the source/hash for human inspection. They are not independently verified by a second PDF parser.
+
+See [operations](docs/OPERATIONS.md), [API contract](docs/API.md), and [product specification](docs/PRODUCT.md) for details and remaining work.

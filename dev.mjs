@@ -1,10 +1,13 @@
 import {spawn} from 'node:child_process';
-import {existsSync} from 'node:fs';
-const python=process.env.CLEARCARE_PYTHON || (process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python');
-if(!existsSync(python)){console.error('Create .venv and install backend/requirements.txt first. See README.md.');process.exit(1)}
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {unlink} from 'node:fs/promises';
+const go=process.env.CLEARCARE_GO || 'go';
+const binary=path.join(tmpdir(),`clearcare-backend-${process.pid}${process.platform==='win32'?'.exe':''}`);
 const env={...process.env,...(process.argv.includes('--demo')?{CLEARCARE_DEMO:'1'}:{})};
-const children=[spawn(python,['-m','uvicorn','main:app','--app-dir','backend','--host','127.0.0.1','--port','8000'],{stdio:'inherit',env}),spawn(process.execPath,['server.mjs'],{stdio:'inherit',env})];
-let stopping=false;
-function stop(code=0){if(stopping)return;stopping=true;children.forEach(c=>c.kill());process.exitCode=code}
-children.forEach(c=>{c.on('error',e=>{console.error(e.message);stop(1)});c.on('exit',code=>stop(code||0))});
+const build=spawn(go,['build','-o',binary,'.'],{cwd:'backend/goapp',stdio:'inherit',env});
+let stopping=false, children=[];
+function stop(code=0){if(stopping)return;stopping=true;build.kill();children.forEach(c=>c.kill());unlink(binary).catch(()=>{});process.exitCode=code}
+build.on('error',e=>{console.error(`Unable to start Go: ${e.message}. Install Go 1.24+ or set CLEARCARE_GO.`);stop(1)});
+build.on('exit',code=>{if(stopping)return;if(code!==0){stop(code||1);return}children=[spawn(binary,[],{cwd:'backend/goapp',stdio:'inherit',env}),spawn(process.execPath,['server.mjs'],{stdio:'inherit',env})];children.forEach(c=>{c.on('error',e=>{console.error(e.message);stop(1)});c.on('exit',code=>stop(code||0))})});
 process.on('SIGINT',()=>stop());process.on('SIGTERM',()=>stop());

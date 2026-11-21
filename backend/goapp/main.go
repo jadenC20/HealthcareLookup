@@ -1,6 +1,7 @@
 package main
 
 import (
+	"clearcare/account"
 	"clearcare/billreview"
 	"clearcare/caresearch"
 	"encoding/json"
@@ -20,6 +21,15 @@ func main() {
 		dataDir = filepath.Join(dataDir, "demo")
 	}
 	care := caresearch.Load(dataDir)
+	dbPath := os.Getenv("CLEARCARE_DB")
+	if dbPath == "" {
+		dbPath = "../clearcare.db"
+	}
+	accounts, err := account.Open(dbPath)
+	if err != nil {
+		log.Fatalf("open account database: %v", err)
+	}
+	defer accounts.Close()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /sample", func(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +39,34 @@ func main() {
 	mux.HandleFunc("GET /providers", care.Providers)
 	mux.HandleFunc("GET /prices/compare", care.Prices)
 	mux.HandleFunc("GET /data/status", care.Status)
+	mux.HandleFunc("POST /data/reload", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"detail":"Reload data by restarting the local backend."}`, http.StatusForbidden)
+	})
+	mux.HandleFunc("POST /auth/register", accounts.Register)
+	mux.HandleFunc("POST /auth/login", accounts.Login)
+	mux.HandleFunc("GET /auth/me", accounts.Me)
+	mux.HandleFunc("POST /auth/logout", accounts.Logout)
+	mux.HandleFunc("PATCH /profile", accounts.Profile)
+	mux.HandleFunc("GET /profile/insurance-card", accounts.CardStatus)
+	mux.HandleFunc("GET /profile/insurance-card/file", accounts.CardFile)
+	mux.HandleFunc("POST /profile/insurance-card", accounts.UploadCard)
+	mux.HandleFunc("DELETE /profile/insurance-card", accounts.DeleteCard)
+	mux.HandleFunc("GET /profile/insurance", accounts.InsuranceStatus)
+	mux.HandleFunc("PUT /profile/insurance/details", accounts.ConfirmInsurance)
+	mux.HandleFunc("POST /profile/insurance/retry", accounts.RetryInsurance)
+	mux.HandleFunc("POST /profile/insurance/select", accounts.SelectInsurance)
+	mux.HandleFunc("POST /profile/insurance/sbc", accounts.UploadSBC)
+	mux.HandleFunc("GET /profile/insurance/sbc", accounts.SBCFile)
+	mux.HandleFunc("DELETE /profile/insurance", accounts.DeleteInsurance)
+	mux.HandleFunc("DELETE /account", accounts.DeleteAccount)
+	mux.HandleFunc("POST /documents/extract", accounts.Extract)
+	mux.HandleFunc("POST /reviews", accounts.Save)
+	mux.HandleFunc("GET /reviews", accounts.List)
+	mux.HandleFunc("GET /reviews/{id}", accounts.Get)
+	mux.HandleFunc("DELETE /reviews/{id}", accounts.Delete)
+	mux.HandleFunc("GET /reviews/{id}/pdf", accounts.SavedPDF)
+	mux.HandleFunc("POST /reports/pdf", accounts.CurrentPDF)
+	mux.HandleFunc("GET /account/pdf", accounts.AccountPDF)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
