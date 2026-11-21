@@ -4,3 +4,11 @@ node_modules/
 !.env.example
 uploads/
 *.log
+.venv/
+__pycache__/
+.pytest_cache/
+*.db
+*.db-*
+tmp/
+output/
+backend/ocr-data/

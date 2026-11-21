@@ -1,7 +1,8 @@
 import os
 import sqlite3
+from pathlib import Path
 
-DB_PATH = os.environ.get("CLEARCARE_DB", "clearcare.db")
+DB_PATH = os.environ.get("CLEARCARE_DB", str(Path(__file__).resolve().parent / "clearcare.db"))
 
 
 def get_connection():

@@ -138,6 +138,8 @@ def check_bill_vs_eob(bill: Bill, eob: EOB):
         eob_groups[line_key(line.service_date, line.code, line.description)].append(line)
 
     for key, lines in bill_groups.items():
+        if not eob.lines:
+            continue  # A total-only EOB cannot support service-level comparisons.
         bill_total = add_up([l.charge for l in lines])
         ids = [l.line_id for l in lines]
         if key not in eob_groups:
@@ -169,9 +171,9 @@ def check_bill_vs_eob(bill: Bill, eob: EOB):
 
     # Patient responsibility totals
     eob_total_patient = eob.patient_responsibility_total
-    if eob_total_patient is None:
+    if eob_total_patient is None and eob.lines:
         eob_total_patient = add_up([l.patient_responsibility for l in eob.lines])
-    if bill.patient_responsibility is not None:
+    if bill.patient_responsibility is not None and eob_total_patient is not None:
         if abs(bill.patient_responsibility - eob_total_patient) > 0.01:
             findings.append(Finding(
                 rule="patient_responsibility_mismatch",

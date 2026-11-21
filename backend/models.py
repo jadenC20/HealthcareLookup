@@ -1,26 +1,29 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
+
+class FiniteModel(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
 
 
-class BillLine(BaseModel):
+class BillLine(FiniteModel):
     line_id: str
     service_date: Optional[str] = None
     description: str
     code: Optional[str] = None
-    quantity: int = 1
+    quantity: int = Field(default=1,ge=1)
     charge: float
     page: Optional[int] = None  # page in the uploaded document
 
 
-class Bill(BaseModel):
-    provider_name: str
+class Bill(FiniteModel):
+    provider_name: str = Field(min_length=1,max_length=200)
     claim_number: Optional[str] = None
-    lines: list[BillLine]
+    lines: list[BillLine] = Field(max_length=200)
     stated_subtotal: Optional[float] = None
     patient_responsibility: Optional[float] = None
 
 
-class EOBLine(BaseModel):
+class EOBLine(FiniteModel):
     line_id: str
     service_date: Optional[str] = None
     description: str
@@ -31,9 +34,9 @@ class EOBLine(BaseModel):
     patient_responsibility: float
 
 
-class EOB(BaseModel):
+class EOB(FiniteModel):
     claim_number: Optional[str] = None
-    lines: list[EOBLine]
+    lines: list[EOBLine] = Field(max_length=200)
     patient_responsibility_total: Optional[float] = None
 
 
