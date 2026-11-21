@@ -1,3 +1,5 @@
+<p data-connect-loading class="live-note">Loading your connected workspace. If this message stays visible, restart the frontend server and refresh this page.</p>
+<details data-source-preview class="design-preview live-panel"><summary>Explore design examples · Not your data</summary><p class="live-note">Illustrative records and interactions. These are not your results.</p>
 <div class="flex flex-col w-full">
 <div class="px-8 py-8 max-w-[1440px] w-full mx-auto">
 <!-- 12-Column Workspace Split -->
@@ -9,7 +11,7 @@
 <div class="flex flex-col gap-1 min-w-0">
 <span class="text-xs font-bold text-primary uppercase tracking-wider">01 / Bill Intelligence</span>
 <h1 class="font-headline font-bold text-2xl sm:text-3xl text-on-surface tracking-tight">Understand my bill</h1>
-<p class="text-sm text-on-surface-variant">Upload an itemized statement or EOB to decode medical codes and flag overcharges.</p>
+<p class="text-sm text-on-surface-variant">This example illustrates a bill layout. Upload your own medical bill in the connected intake above.</p>
 </div>
 <button class="inline-flex items-center gap-2 bg-primary text-on-primary px-5 py-2.5 rounded-full font-bold text-sm shadow-sm hover:bg-primary/90 hover:scale-[1.01] transition-all shrink-0 cursor-pointer" id="upload-cta-btn" type="button">
 <span class="material-symbols-outlined text-[20px]">upload_file</span>
@@ -17,7 +19,7 @@
 </button>
 </div>
 <!-- Drag-and-Drop / Quick Intake Card -->
-<div class="relative overflow-hidden bg-surface-container-lowest rounded-xl p-5 border border-outline-variant/40 shadow-xs transition-all hover:shadow-sm group cursor-pointer" id="dropzone-card">
+<div class="relative overflow-hidden bg-surface-container-lowest rounded-xl p-5 border border-outline-variant/40 shadow-xs transition-all hover:shadow-sm group cursor-pointer" id="bill-design-example">
 <div class="absolute -right-12 -top-12 w-48 h-48 rounded-full bg-primary-fixed/20 blur-2xl pointer-events-none"></div>
 <div class="relative bg-surface-container-low rounded-xl p-5 flex flex-col md:flex-row items-center justify-between gap-6 border border-outline-variant/30">
 <div class="flex items-center gap-4 min-w-0">
@@ -25,18 +27,18 @@
 <span class="material-symbols-outlined text-[26px]">cloud_upload</span>
 </div>
 <div class="flex flex-col gap-0.5 min-w-0">
-<span class="font-headline font-bold text-base text-on-surface truncate">Drop your PDF, PNG, or JPG statement here</span>
-<span class="text-xs text-on-surface-variant">Instant CPT &amp; HCPCS code decoding • Frontend demonstration</span>
+<span class="font-headline font-bold text-base text-on-surface truncate">Illustrative bill review layout</span>
+<span class="text-xs text-on-surface-variant">Read-only design example — use the real AI intake above</span>
 </div>
 </div>
 <div class="flex items-center gap-3 shrink-0">
 <button class="inline-flex items-center gap-2 bg-surface-container-lowest text-primary px-4 py-2 rounded-full font-bold text-xs border border-outline-variant/50 shadow-xs hover:bg-surface-container transition-colors cursor-pointer" id="sample-bill-btn" type="button">
 <span class="material-symbols-outlined text-[16px] text-primary">science</span>
-<span>Try Sample Inpatient Bill</span>
+<span>View illustrative review</span>
 </button>
 </div>
 </div>
-<input accept=".pdf,.png,.jpg,.jpeg" class="hidden" id="file-input" type="file"/>
+
 </div>
 <!-- Active Bill Audit Breakdown -->
 <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/40 shadow-xs overflow-hidden flex flex-col">
@@ -278,3 +280,5 @@
 <span class="text-xs font-bold" id="toast-message">Action completed</span>
 </div>
 </div>
+
+</details>
