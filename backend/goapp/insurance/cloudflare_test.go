@@ -86,6 +86,25 @@ func TestCloudflareBridgePreservesSearchToolAndSources(t *testing.T) {
 	}
 }
 
+func TestCloudflareSearchKeepsRetrievedPriceExcerptsSeparateFromModelSummary(t *testing.T) {
+	const source = "https://pharmacy.example/metformin"
+	reply := response("The model claims a price of $1.")
+	reply["output"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)["annotations"] = []any{map[string]any{"type": "url_citation", "url": source}}
+	reply["search_results"] = []any{
+		map[string]any{"url": source, "excerpt": "Metformin 500 mg, 30 tablets: $12."},
+		map[string]any{"url": "https://uncited.example", "excerpt": "An uncited price of $2."},
+	}
+	ai := cloudflareFixtureAI(t, reply, nil)
+	got, err := ai.Search(context.Background(), "Find metformin prices")
+	if err != nil || len(got.Excerpts) != 1 || got.Excerpts[source] != "Metformin 500 mg, 30 tablets: $12." {
+		t.Fatalf("retrieved evidence was lost or mixed with model claims: %+v %v", got, err)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil || strings.Contains(string(encoded), "price of $1") || strings.Contains(string(encoded), "$12") {
+		t.Fatal("internal source excerpts leaked into the public search response")
+	}
+}
+
 func TestCloudflareBridgeRejectsIncompleteStructuredOutput(t *testing.T) {
 	ai := cloudflareFixtureAI(t, fixtureResponse(t, map[string]any{"details": testDetails()}), nil)
 	if _, err := ai.Extract(context.Background(), Document{}); err == nil {

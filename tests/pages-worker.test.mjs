@@ -22,6 +22,15 @@ test('Pages proxy forwards authenticated API requests with its own secret and pr
  assert.deepEqual(await response.json(),{detail:'Please retry.'});
 });
 
+test('Pages proxy forwards medicine search JSON and backend validation errors',async t=>{
+ const originalFetch=globalThis.fetch;let received;t.after(()=>{globalThis.fetch=originalFetch;});
+ globalThis.fetch=async(url,options)=>{received={url,method:options.method,headers:options.headers,body:await new Response(options.body).text()};return new Response('{"detail":"Enter a medicine name."}',{status:422,headers:{'Content-Type':'application/json'}});};
+ const body='{"query":"metformin","ai_consent":true}';
+ const response=await worker.fetch(new Request(frontend+'/api/prescription-comparison/search',{method:'POST',headers:{Origin:frontend,'Content-Type':'application/json',Authorization:'Bearer user-session'},body}),environment);
+ assert.equal(received.url,'https://clearcare-api.example/prescription-comparison/search');assert.equal(received.method,'POST');assert.equal(received.body,body);assert.equal(received.headers.get('Authorization'),'Bearer user-session');assert.equal(received.headers.get('X-ClearCare-Proxy-Secret'),'worker-owned-secret');
+ assert.equal(response.status,422);assert.equal(response.headers.get('Cache-Control'),'no-store');assert.deepEqual(await response.json(),{detail:'Enter a medicine name.'});
+});
+
 test('Pages proxy rejects unsupported routes, cross-site requests, and missing server configuration before fetch',async t=>{
  let calls=0;const originalFetch=globalThis.fetch;globalThis.fetch=async()=>{calls++;throw Error('Should not fetch.');};t.after(()=>{globalThis.fetch=originalFetch;});
  assert.equal((await worker.fetch(new Request(frontend+'/api/data/reload',{method:'POST'}),environment)).status,404);

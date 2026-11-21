@@ -20,7 +20,7 @@ Patient demographics remain local to the matching calculation and saved profile;
 
 ## Prescription Comparison
 
-The user selected exact-prescription comparison first. RxNorm lookup returns clinical/branded drug candidates; the user chooses the exact strength/form/brand product. The backend resolves its canonical identity and searches public sources for matching quantity, ZIP and cash/coupon price type.
+The main medicine finder accepts a medicine name and automatically searches public pharmacy and price-comparison sources. Strength and quantity can be included in the same text field but are not required. It returns verified source-backed price amounts where available and price-lookup links otherwise. It does not suggest different medicines or manufacture savings. The older exact-prescription API also supports RxNorm selection and quantity/ZIP comparisons for integrations that need them.
 
 Only source-backed, exact-product offers with quotes survive validation. Offers are sorted by price within the requested type, with optional difference from the user's current price. Unknown prices are not zero, package prices are not prorated, and insurance prices are not inferred. Generic or therapeutic substitution is not automatically recommended. Coupon eligibility, inventory and checkout price require pharmacist confirmation.
 

@@ -56,6 +56,16 @@ test('search supplies retrieved public evidence and only real source annotations
  assert.ok(query.startsWith('https://www.bing.com/search?'));assert.ok(decodeURIComponent(query).includes('Synthetic 2026'));assert.deepEqual(part.annotations,[{type:'url_citation',url:'https://insurer.example/real.pdf'}]);assert.ok(!part.text.includes('invented.example'));assert.match(options.messages.at(-1).content,/UNTRUSTED PUBLIC SEARCH EVIDENCE/);
 });
 
+test('private search response preserves retrieved snippets independently of model claims',async t=>{
+ const originalFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=originalFetch;});
+ globalThis.fetch=async()=>new Response('<rss><channel><item><title>Metformin pharmacy offer</title><link>https://pharmacy.example/metformin</link><description>Metformin 500 mg, 30 tablets: $12 cash. Eligibility restrictions apply.</description></item></channel></rss>');
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'Metformin is $1 at https://pharmacy.example/metformin'})}};
+ const response=await worker.fetch(request({input:'Find published metformin pharmacy prices.',tools:[{type:'web_search'}]}),env);
+ assert.equal(response.status,200);const data=await response.json();
+ assert.deepEqual(data.search_results,[{url:'https://pharmacy.example/metformin',title:'Metformin pharmacy offer',excerpt:'Metformin 500 mg, 30 tablets: $12 cash. Eligibility restrictions apply.'}]);
+ assert.match(data.output[0].content[0].text,/\$1 at/);assert.ok(!data.search_results[0].excerpt.includes('$1 at'));
+});
+
 test('SBC search falls back to DuckDuckGo HTML and decodes the actual PDF URL',async t=>{
  const originalFetch=globalThis.fetch,queries=[];t.after(()=>{globalThis.fetch=originalFetch;});
  const document='https://insurer.example/coverage/2026/sbc.pdf?variant=Silver&state=NY';

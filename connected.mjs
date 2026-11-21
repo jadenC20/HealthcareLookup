@@ -1,7 +1,7 @@
 import {createSupabaseAuth} from './supabase-auth.mjs';
 import {insuranceView,insuranceResults,billAdviceHTML,careAdviceHTML} from './insurance-view.mjs';
 import {createApi,priceView,validateUpload} from './api-client.mjs';
-let user=null,online=false,review=null,analysis=null,insuranceState=null,insuranceRefreshTimer;
+let user=null,online=false,review=null,analysis=null,insuranceState=null,insuranceRefreshTimer,prescriptionController=null;
 let cloudUser=null,workspaceError='',workspaceSyncTimer,workspaceRevision=0;
 const cloudAuth=createSupabaseAuth({createClient:globalThis.supabase?.createClient,onChange:handleCloudIdentity});
 let backendStatus={health:null,accounts:null,insurance:null};
@@ -43,7 +43,7 @@ function auth(register=false){
 }
 function handleCloudIdentity(next){
  const changed=cloudUser?.id!==next?.id;cloudUser=next;clearTimeout(workspaceSyncTimer);
- if(changed){workspaceRevision++;user=null;workspaceError='';review=null;analysis=null;insuranceState=null;api.clearSession();clearTimeout(insuranceRefreshTimer);if(dialog.open)dialog.close();document.querySelector('.print-letter')?.remove();}
+ if(changed){workspaceRevision++;user=null;workspaceError='';review=null;analysis=null;insuranceState=null;api.clearSession();clearTimeout(insuranceRefreshTimer);prescriptionController?.abort();prescriptionController=null;if(dialog.open)dialog.close();document.querySelector('.print-letter')?.remove();}
  if(changed&&activePage!=='account')render();
  refreshIdentity();if(activePage==='account'&&(changed||!user))renderAccount();
  if(next&&!user)workspaceSyncTimer=setTimeout(syncWorkspace,0);
@@ -136,7 +136,7 @@ function renderInsurance(target,state,card){const result=state.result||{};target
  target.querySelectorAll('[data-candidate]').forEach(b=>b.onclick=()=>{const candidate=result.candidates[Number(b.dataset.candidate)];b.textContent='Confirm this SBC & interpret';b.onclick=()=>operation(b.parentElement,'/profile/insurance/select',{revision:state.revision,candidate_id:candidate.id});statusText(status,'Check this document’s plan name, variant and coverage year. Select Confirm this SBC & interpret to continue.');});
  if(result.status==='processing'&&isWizard){target.insertAdjacentHTML('afterbegin','<div class="insurance-loading" role="status"><span class="insurance-spinner"></span><h3>Your insurance lookup is in progress…</h3><p>Waiting for the current response. Your profile updates when it completes.</p></div>');clearTimeout(insuranceRefreshTimer);insuranceRefreshTimer=setTimeout(loadInsurance,4000);}
 }
-function safeSource(value){try{const url=new URL(value);return url.protocol==='https:'?`<a href="${e(url.href)}" target="_blank" rel="noopener noreferrer">View source document</a>`:'';}catch{return '';}}
+function safeSource(value,label='View source document'){try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password?`<a href="${e(url.href)}" target="_blank" rel="noopener noreferrer">${e(label)}</a>`:'';}catch{return '';}}
 showBenefits=()=>{if(!cloudUser&&!user){auth();return;}route('account');if(activePage==='account')renderAccount();};
 
 function billEditor(){
@@ -207,6 +207,46 @@ function careSearch(){
  form.querySelectorAll('[name=type]').forEach(control=>control.onchange=()=>{if(searched&&form.reportValidity())form.requestSubmit();});
 }
 
+function medicineResults(result={},query=''){
+ const medicine=result.medicine||query,offers=Array.isArray(result.offers)?result.offers:[],sources=Array.isArray(result.sources)?result.sources:[],limitations=Array.isArray(result.limitations)?result.limitations:[];
+ const groups=new Map();
+ offers.forEach((offer,index)=>{
+  const currency=String(offer.currency||'').toUpperCase(),amount=typeof offer.price==='number'&&Number.isFinite(offer.price)&&offer.price>=0?offer.price:null,link=safeSource(offer.source_url,amount===null?'Compare prices':'Check current price');
+  if(!link)return;
+  const price=amount!==null&&/^[A-Z]{3}$/.test(currency)&&String(offer.quote||'').trim()?amount:null;
+  const key=offer.medicine&&offer.quantity?JSON.stringify([String(offer.medicine).trim().toLowerCase(),String(offer.quantity).trim().toLowerCase(),currency]):'offer-'+index;
+  if(!groups.has(key))groups.set(key,[]);groups.get(key).push({...offer,currency,price,link});
+ });
+ const cards=[...groups.values()].flatMap(group=>group.sort((a,b)=>(a.price??Infinity)-(b.price??Infinity)));
+ const priced=cards.filter(offer=>offer.price!==null).length,links=[...new Set(sources)].map(url=>safeSource(url,'Compare prices')).filter(Boolean);
+ const money=offer=>{try{return new Intl.NumberFormat('en-US',{style:'currency',currency:offer.currency}).format(offer.price);}catch{return offer.currency+' '+offer.price.toFixed(2);}};
+ return `<h3>${e(medicine)}</h3><p>${priced?'Published prices found. Matching medicine and quantity groups are ordered by price.':cards.length||links.length?'Check current prices at these sources. No verified price amount was found.':result.status==='unavailable'?'Medicine price search is temporarily unavailable. Please try again.':'No price-comparison sources were found for this medicine. Try its full name.'}</p>${cards.map(offer=>`<article class="live-card"><h3>${e(offer.pharmacy||'Price-comparison source')}</h3><p>${e(offer.medicine||medicine)}${offer.quantity?' · '+e(offer.quantity):''}</p>${offer.price!==null?`<p class="live-price">${e(money(offer))}</p>`:'<p>Check the source for the current price.</p>'}${offer.quote?`<blockquote>${e(offer.quote)}</blockquote>`:''}${offer.conditions?`<p>${e(offer.conditions)}</p>`:''}<div class="medicine-source">${offer.link}</div></article>`).join('')}${links.length?`<div class="live-actions medicine-source">${links.join('')}</div>`:''}${limitations.map(note=>`<p class="live-note">${e(note)}</p>`).join('')}<p>Confirm the same medicine, strength, form, quantity, and final price at the source. Prices and conditions can change.</p>`;
+}
+function prescriptionFinder(){
+ const host=document.createElement('section');host.className='live-panel medicine-finder';host.innerHTML='<h1>Find lower medicine prices</h1><p>Enter a medicine name. Add strength and quantity if you know them. Your search is sent to AI and medicine-price search services.</p><form id="medicine-search"><label>Medicine name<input name="medicine" required maxlength="200" placeholder="e.g. atorvastatin 20mg, 30 tablets" autocomplete="off"></label><button class="primary-action">Find lower prices</button></form><p id="medicine-status" class="live-status" role="status"></p><div id="medicine-results"></div>';document.querySelector('#live-page-content').append(host);
+ const form=host.querySelector('form'),status=host.querySelector('#medicine-status'),results=host.querySelector('#medicine-results'),submit=form.querySelector('button');let requestVersion=0;
+ form.onsubmit=async event=>{
+  event.preventDefault();const medicine=form.elements.medicine.value.trim();if(!medicine){statusText(status,'Enter a medicine name.');return;}
+  prescriptionController?.abort();const controller=new AbortController();prescriptionController=controller;const version=++requestVersion,owner=user?.id,cloudOwner=cloudUser?.id;
+  const current=()=>version===requestVersion&&owner===user?.id&&cloudOwner===cloudUser?.id&&host.isConnected;
+  const visible=()=>version===requestVersion&&cloudOwner===cloudUser?.id&&host.isConnected;
+  let timedOut=false;const timeout=setTimeout(()=>{timedOut=true;controller.abort();},240000);
+  const pause=()=>new Promise((resolve,reject)=>{if(controller.signal.aborted){const error=new Error('Search canceled.');error.name='AbortError';reject(error);return;}const abort=()=>{clearTimeout(timer);const error=new Error('Search canceled.');error.name='AbortError';reject(error);};const timer=setTimeout(()=>{controller.signal.removeEventListener('abort',abort);resolve();},1500);controller.signal.addEventListener('abort',abort,{once:true});});
+  submit.disabled=true;results.innerHTML='';statusText(status,'Searching for lower prices…');results.setAttribute('aria-busy','true');
+  try{
+   let data=await api.request('/prescription-comparison/search',{method:'POST',body:{medicine},signal:controller.signal});
+   while(data.job){
+    if(!current()||controller.signal.aborted)return;
+    const job=data.job;if(job.status==='completed'){data=job.result;break;}if(['failed','canceled'].includes(job.status))throw new Error(job.error||'The medicine search could not be completed. Please retry.');
+    const poll=job.poll_url||job.id&&'/jobs/'+encodeURIComponent(job.id);if(typeof poll!=='string'||!/^\/jobs\/[A-Za-z0-9_-]+$/.test(poll))throw new Error('The search returned an invalid progress link. Please retry.');
+    statusText(status,'Searching for lower prices…'+(job.stage&&job.stage!=='queued'?' Checking available sources.':''));await pause();if(!current()||controller.signal.aborted)return;data=await api.request(poll,{signal:controller.signal});
+   }
+   if(!current()||controller.signal.aborted)return;if(!data||typeof data!=='object')throw new Error('The medicine search returned an unreadable result. Please retry.');results.innerHTML=medicineResults(data,medicine);statusText(status,data.status==='unavailable'?'Search unavailable.':data.status==='no_results'?'No matching price sources found.':data.status==='prices_found'?'Price search complete.':'Search complete. Check the sources for current prices.');
+  }catch(error){if(visible()&&(!controller.signal.aborted||timedOut)){statusText(status,timedOut?'The search took too long. Please try again.':error.message);status.classList.add('live-error');}}
+  finally{clearTimeout(timeout);if(visible()){submit.disabled=false;results.removeAttribute('aria-busy');}if(prescriptionController===controller)prescriptionController=null;}
+ };
+}
+
 function connectionBanner(){
  const missing=backendStatus.insurance===404?' The running backend is missing the insurance AI routes.':backendStatus.insurance===401&&!cloudUser?' Sign in to use insurance AI.':'';
  return backendStatus.health===null?'Checking backend connection…':online?'Backend reachable.'+missing+' A connection does not verify AI availability.':'The healthcare API is temporarily unavailable. Please try again shortly.';
@@ -214,7 +254,7 @@ function connectionBanner(){
 function updateConnection(){document.querySelectorAll('.backend-banner').forEach(el=>{el.textContent=connectionBanner();el.classList.toggle('offline',!online||backendStatus.insurance===404);});}
 function preservePreviews(){const original=main.querySelector('[data-source-preview]');if(original){original.remove();main.replaceChildren();return original;}const preview=document.createElement('details');preview.className='design-preview live-panel';preview.innerHTML='<summary>Explore design examples · Not your data</summary><p class="live-note">These original design interactions use illustrative records. They are separate from your account and backend results.</p>';const examples=document.createElement('div');examples.className='design-examples';while(main.firstChild)examples.append(main.firstChild);preview.append(examples);return preview;}
 function mountConnected(page){
- clearTimeout(insuranceRefreshTimer);if(page==='account'){renderAccount();return;}
+ clearTimeout(insuranceRefreshTimer);prescriptionController?.abort();prescriptionController=null;if(page==='account'){renderAccount();return;}
  if(!cloudUser&&!user){
   main.innerHTML='<section class="signin-gate"><span class="material-symbols-outlined" aria-hidden="true">lock</span><h1>Sign in to continue</h1><p>Log in to access '+e(titles[page].toLowerCase())+' and your ClearCare workspace.</p>'+button('Sign in','page-signin')+'</section>';
   main.querySelector('#page-signin').onclick=()=>auth();
@@ -223,13 +263,13 @@ function mountConnected(page){
  if(main.querySelector('#live-page-content'))return;
  const preview=preservePreviews();
  preview.querySelector('summary')?.setAttribute('title','For demo purposes only');
- const shell=document.createElement('div');shell.className='live-shell';shell.innerHTML='<div class="backend-banner" role="status"></div><section class="live-panel live-intro" id="live-page-heading"><div class="live-label">Your ClearCare workspace</div><h1>'+e(titles[page])+'</h1><p>'+e({overview:'Your saved records and plan analysis, with no assumed savings or coverage.',bill:'Enter your own bill details below to get a review of that bill. Results appear only after you run the checks.',care:'Search sourced records from the backend. Demonstration listings are hidden unless you request them.',prescriptions:'Live prescription pricing is not connected yet. Your medication costs have not been calculated.'}[page])+'</p></section><div id="live-page-content"></div>';
- if(page==='overview'||page==='bill'||page==='care')shell.querySelector('#live-page-heading')?.remove();
- if(page==='care')shell.querySelector('.backend-banner')?.remove();
- main.append(shell);main.append(preview);
+ const shell=document.createElement('div');shell.className='live-shell';shell.innerHTML='<div class="backend-banner" role="status"></div><section class="live-panel live-intro" id="live-page-heading"><div class="live-label">Your ClearCare workspace</div><h1>'+e(titles[page])+'</h1><p>'+e({overview:'Your saved records and plan analysis, with no assumed savings or coverage.',bill:'Enter your own bill details below to get a review of that bill. Results appear only after you run the checks.',care:'Search sourced records from the backend. Demonstration listings are hidden unless you request them.',prescriptions:'Search published sources for lower prices for the same medicine.'}[page])+'</p></section><div id="live-page-content"></div>';
+ if(page==='overview'||page==='bill'||page==='care'||page==='prescriptions')shell.querySelector('#live-page-heading')?.remove();
+ if(page==='care'||page==='prescriptions')shell.querySelector('.backend-banner')?.remove();
+ main.append(shell);if(page!=='prescriptions')main.append(preview);
  if(page==='bill')billEditor();
  if(page==='care')careSearch();
- if(page==='prescriptions')document.querySelector('#live-page-content').innerHTML='<section class="live-panel"><h2>Prescription tools</h2><p>No medication records or live pharmacy prices are available from the current backend. The design examples below remain available to explore.</p></section>';
+ if(page==='prescriptions')prescriptionFinder();
  if(page==='overview')renderOverview();updateConnection();
 }
 async function renderOverview(){const target=document.querySelector('#live-page-content');if(activePage!=='overview'||!target||(!cloudUser&&!user))return;

@@ -9,7 +9,7 @@ const source=(await readFile(new URL('../connected.mjs',import.meta.url),'utf8')
 function node(){const listeners={};return {isConnected:true,innerHTML:'',textContent:'',disabled:false,childNodes:[],dataset:{},listeners,classList:{add(){},remove(){},toggle(){}},append(){},prepend(){},before(){},after(){},remove(){},setAttribute(){},removeAttribute(){},insertAdjacentHTML(){},addEventListener(type,fn){listeners[type]=fn;},querySelectorAll(){return [];},querySelector(){return null;}};}
 function harness(request=async()=>({}),elements=new Map()){
  const timers=[],dialog={...node(),open:false,close(){this.open=false;this.closed=true;}},main=node();
- const context=vm.createContext({console,URL,URLSearchParams,FormData,validateUpload,priceView,insuranceView,careAdviceHTML,Promise,Date,Number,Map,Set,Object,String,JSON,Error,document:{querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[],createElement:()=>node()},window:{addEventListener(){}},dialog,main,activePage:'',escaped:String,notify(){},route(){},render(){},titles:{},showProfile(){},showBenefits(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},createSupabaseAuth:()=>({config:{configured:true},getAccessToken:async()=>null}),createApi:()=>({request,clearSession(){context.sessionCleared=true;},setSession(){}})});
+ const context=vm.createContext({console,URL,URLSearchParams,FormData,AbortController,validateUpload,priceView,insuranceView,careAdviceHTML,Promise,Date,Number,Map,Set,Object,String,JSON,Error,document:{querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[],createElement:()=>node()},window:{addEventListener(){}},dialog,main,activePage:'',escaped:String,notify(){},route(){},render(){},titles:{},showProfile(){},showBenefits(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},createSupabaseAuth:()=>({config:{configured:true},getAccessToken:async()=>null}),createApi:()=>({request,clearSession(){context.sessionCleared=true;},setSession(){}})});
  vm.runInContext(source,context);
  const run=code=>vm.runInContext(code,context);
  run("user={id:'owner'};cloudUser={id:'owner'};");
@@ -133,4 +133,31 @@ test('unavailable and unrequested care ranking use honest alphabetical fallback'
   assert.match(status,consent?/AI ranking unavailable\. AI service temporarily unavailable\./:/AI ranking not requested/);
   if(!consent){const query=new URL(h.paths.find(path=>path.startsWith('/care/search?')),'https://example.test');assert.equal(query.searchParams.has('ai_consent'),false);}
  }
+});
+
+function medicineHarness(request){
+ const calls=[],host=node(),form={...node(),elements:{medicine:{value:' atorvastatin '}}},submit=node(),nodes=new Map([['form',form]]),h=harness(async(path,options)=>{calls.push({path,options});return request(path,options);},new Map([['#live-page-content',node()]]));
+ host.querySelector=selector=>{if(!nodes.has(selector))nodes.set(selector,node());return nodes.get(selector);};form.querySelector=()=>submit;h.context.document.createElement=()=>host;
+ h.context.setTimeout=(fn,ms)=>{h.timers.push({fn,ms});if(ms===1500)queueMicrotask(fn);return h.timers.length;};h.run('prescriptionFinder()');
+ return {...h,calls,host,form,submit,nodes,search:()=>form.onsubmit({preventDefault(){},target:form})};
+}
+test('medicine finder submits a name alone and polls the asynchronous result',async()=>{
+ let polls=0;const h=medicineHarness(async path=>path==='/prescription-comparison/search'?{job:{id:'job-1',status:'queued',poll_url:'/jobs/job-1'}}:++polls===1?{job:{status:'running',poll_url:'/jobs/job-1'}}:{job:{status:'completed',result:{medicine:'atorvastatin',status:'links_only',offers:[],sources:['https://example.test/atorvastatin'],limitations:['Check the current quantity and price.']}}});
+ await h.search();assert.equal(h.calls[0].options.method,'POST');assert.equal(h.calls[0].options.body.medicine,'atorvastatin');assert.equal(h.calls.length,3);assert.equal(h.submit.disabled,false);
+ assert.match(h.nodes.get('#medicine-results').innerHTML,/Compare prices/);assert.match(h.nodes.get('#medicine-results').innerHTML,/No verified price amount was found/);assert.match(h.host.innerHTML,/Find lower prices/);assert.doesNotMatch(h.host.innerHTML,/name="(?:dose|quantity|zip|rxcui|consent)"/);
+});
+
+test('medicine offers compare matching quantities and never invent a missing price',()=>{
+ const h=harness();h.context.medicineData={medicine:'atorvastatin',status:'prices_found',offers:[{medicine:'atorvastatin 20mg',quantity:'30 tablets',pharmacy:'Higher pharmacy',price:25,currency:'USD',source_url:'https://example.test/higher',quote:'30 tablets cost $25.'},{medicine:'atorvastatin 20mg',quantity:'30 tablets',pharmacy:'Lower pharmacy',price:10,currency:'USD',source_url:'https://example.test/lower',quote:'30 tablets cost $10.'},{medicine:'atorvastatin 20mg',quantity:'90 tablets',pharmacy:'Different quantity',price:9,currency:'USD',source_url:'https://example.test/90',quote:'90 tablets cost $9.'},{medicine:'atorvastatin',pharmacy:'No price yet',price:null,source_url:'https://example.test/check'},{medicine:'atorvastatin',pharmacy:'Unsupported amount',price:1,currency:'USD',source_url:'https://example.test/unsupported',quote:''},{medicine:'atorvastatin',pharmacy:'Unsafe source',price:2,currency:'USD',source_url:'javascript:alert(1)',quote:'$2'}],sources:[],limitations:[]};
+ const html=h.run('medicineResults(medicineData)');assert.ok(html.indexOf('Lower pharmacy')<html.indexOf('Higher pharmacy'));assert.ok(html.indexOf('Higher pharmacy')<html.indexOf('Different quantity'));assert.match(html,/Check the source for the current price/);assert.doesNotMatch(html,/\$0\.00|Unsafe source|javascript:|>\$1\.00</);
+});
+
+test('medicine search errors recover, and a response after sign-out is ignored',async()=>{
+ const failed=medicineHarness(async()=>({job:{status:'failed',error:'No search service is configured.'}}));await failed.search();assert.equal(failed.submit.disabled,false);assert.equal(failed.nodes.get('#medicine-status').textContent,'No search service is configured.');
+ let finish;const stale=medicineHarness(()=>new Promise(resolve=>{finish=resolve;}));const pending=stale.search();const signal=stale.calls[0].options.signal;stale.run('handleCloudIdentity(null)');assert.equal(signal.aborted,true);finish({job:{status:'completed',result:{medicine:'atorvastatin',status:'links_only',sources:['https://example.test/late']}}});await pending;assert.equal(stale.nodes.get('#medicine-results').innerHTML,'');
+});
+
+test('medicine search stops after four minutes and allows another attempt',async()=>{
+ const h=medicineHarness((_path,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>{const error=new Error('aborted');error.name='AbortError';reject(error);})));const pending=h.search();h.timers.find(timer=>timer.ms===240000).fn();await pending;
+ assert.equal(h.submit.disabled,false);assert.equal(h.nodes.get('#medicine-status').textContent,'The search took too long. Please try again.');
 });

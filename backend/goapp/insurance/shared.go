@@ -18,8 +18,9 @@ func (a *OpenAI) ReadDocument(ctx context.Context, prompt string, doc Document, 
 }
 
 type SearchEvidence struct {
-	Text    string   `json:"-"`
-	Sources []string `json:"sources"`
+	Text     string            `json:"-"`
+	Sources  []string          `json:"sources"`
+	Excerpts map[string]string `json:"-"`
 }
 
 func (a *OpenAI) Search(ctx context.Context, query string) (SearchEvidence, error) {
@@ -28,5 +29,21 @@ func (a *OpenAI) Search(ctx context.Context, query string) (SearchEvidence, erro
 		return SearchEvidence{}, err
 	}
 	text, sources, err := responseText(response)
-	return SearchEvidence{text, sources}, err
+	excerpts := map[string]string{}
+	allowed := map[string]bool{}
+	for _, source := range sources {
+		allowed[source] = true
+	}
+	if results, ok := response["search_results"].([]any); ok {
+		for _, value := range results {
+			if result, ok := value.(map[string]any); ok {
+				source, _ := result["url"].(string)
+				excerpt, _ := result["excerpt"].(string)
+				if allowed[source] && excerpt != "" {
+					excerpts[source] = excerpt
+				}
+			}
+		}
+	}
+	return SearchEvidence{Text: text, Sources: sources, Excerpts: excerpts}, err
 }

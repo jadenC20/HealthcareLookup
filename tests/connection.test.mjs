@@ -42,6 +42,16 @@ test('hosted Node proxy sends the configured secret and public origin',async t=>
  const response=await fetch(`http://127.0.0.1:${frontend.address().port}/api/profile`,{method:'PATCH',headers:{Origin:'https://clearcare.example','X-ClearCare-Proxy-Secret':'browser-supplied',Forwarded:'host=untrusted.example','X-Forwarded-Host':'untrusted.example'},body:'{}'});
  assert.equal(response.status,200);await response.text();assert.equal(received.origin,'https://clearcare.example');assert.equal(received['x-clearcare-proxy-secret'],'server-owned-secret');assert.equal(received.forwarded,undefined);assert.equal(received['x-forwarded-host'],undefined);
 });
+test('Node proxy forwards medicine search JSON and backend validation errors',async t=>{
+ let received;
+ const backend=http.createServer(async(req,res)=>{const chunks=[];for await(const chunk of req)chunks.push(chunk);received={url:req.url,method:req.method,headers:req.headers,body:Buffer.concat(chunks).toString()};res.writeHead(422,{'Content-Type':'application/json'});res.end('{"detail":"Enter a medicine name."}');});backend.listen(0,'127.0.0.1');await once(backend,'listening');
+ const frontend=createFrontendServer({backendUrl:`http://127.0.0.1:${backend.address().port}`,proxySecret:'server-owned-secret',supabaseConfig:{configured:false}});frontend.listen(0,'127.0.0.1');await once(frontend,'listening');
+ t.after(()=>{frontend.closeAllConnections();frontend.close();backend.closeAllConnections();backend.close();});
+ const origin=`http://127.0.0.1:${frontend.address().port}`,body='{"query":"metformin","ai_consent":true}';
+ const response=await fetch(origin+'/api/prescription-comparison/search',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',Authorization:'Bearer user-session'},body});
+ assert.equal(received.url,'/prescription-comparison/search');assert.equal(received.method,'POST');assert.equal(received.body,body);assert.equal(received.headers.authorization,'Bearer user-session');assert.equal(received.headers['x-clearcare-proxy-secret'],'server-owned-secret');
+ assert.equal(response.status,422);assert.equal(response.headers.get('Cache-Control'),'no-store');assert.deepEqual(await response.json(),{detail:'Enter a medicine name.'});
+});
 test('client sends in-memory CSRF, handles Go JSON errors and clears expired sessions',async()=>{
  const calls=[];let unauthorized=0;
  const api=createApi({onUnauthorized:()=>unauthorized++,fetchImpl:async(url,options)=>{calls.push({url,...options});return new Response(JSON.stringify(url.endsWith('/auth/me')?{detail:'Please sign in first.'}:{ok:true}),{status:url.endsWith('/auth/me')?401:200});}});
@@ -53,4 +63,6 @@ test('healthcare requests use fresh Supabase access tokens and public health che
  let token='session-one';const seen=[];const api=createApi({getAccessToken:async()=>token,fetchImpl:async(path,options)=>{seen.push({path,...options});return new Response('{}');}});
  await api.request('/health');await api.request('/profile',{method:'PATCH',body:{plan:'My plan'}});token='session-two';await api.request('/bills/ai-review',{method:'POST',body:{ai_consent:true}});await api.request('/care/recommendations?procedure_code=73721');
  assert.equal(seen[0].headers.Authorization,undefined);assert.equal(seen[1].headers.Authorization,'Bearer session-one');assert.equal(seen[2].headers.Authorization,'Bearer session-two');assert.equal(seen[3].headers.Authorization,'Bearer session-two');
+ token='medicine-session';await api.request('/prescription-comparison/search',{method:'POST',body:{medicine:'metformin'}});await api.request('/jobs/search-123');
+ assert.equal(seen[4].headers.Authorization,'Bearer medicine-session');assert.equal(seen[5].headers.Authorization,'Bearer medicine-session');
 });

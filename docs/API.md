@@ -118,6 +118,7 @@ These routes require the session cookie. POST/PUT/DELETE also require `X-CSRF-To
 | POST /care-search/recommend | Preferences or `{}` to use the saved profile; returns ranked candidates and public research |
 | GET /prescription-comparison/drugs?name=... | RxNorm lookup; select an exact clinical/branded product |
 | POST /prescription-comparison/compare | Exact RxCUI, quantity, ZIP and price type comparison |
+| POST /prescription-comparison/search | JSON `medicine` name only; automatic source-backed price search returning a job handle |
 | GET /jobs?limit=25&cursor=... | Paginated current-user jobs |
 | GET /jobs/{id} | Job progress, error, saved result ID and completed result |
 | DELETE /jobs/{id} | Cancel a queued/running job |
