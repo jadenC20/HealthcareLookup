@@ -64,8 +64,9 @@ func OpenPostgres(dsn string) (*Service, error) {
 
 func (s *postgresStore) Initialize() error {
 	// Private business tables are not exposed by Supabase's public REST schema.
-	_, err := s.db.Exec(`CREATE SCHEMA IF NOT EXISTS clearcare;
- CREATE TABLE IF NOT EXISTS clearcare.users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password TEXT NOT NULL,city TEXT DEFAULT '',plan TEXT DEFAULT '');
+	// Provision the schema separately; the runtime role deliberately has no
+	// database-wide CREATE permission.
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS clearcare.users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password TEXT NOT NULL,city TEXT DEFAULT '',plan TEXT DEFAULT '');
  CREATE TABLE IF NOT EXISTS clearcare.sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL,csrf TEXT NOT NULL,expires DOUBLE PRECISION NOT NULL);
  CREATE TABLE IF NOT EXISTS clearcare.reviews(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,title TEXT NOT NULL,created TEXT NOT NULL,payload TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS clearcare.insurance_cards(user_id TEXT PRIMARY KEY,content_type TEXT NOT NULL,data BYTEA NOT NULL,updated TEXT NOT NULL);
