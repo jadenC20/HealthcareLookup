@@ -1,0 +1,23 @@
+{
+  "bill": {
+    "provider_name": "DEMO Imaging Center",
+    "claim_number": "CLM-1001",
+    "stated_subtotal": 3050.00,
+    "patient_responsibility": 640.00,
+    "lines": [
+      {"line_id": "L1", "service_date": "2026-10-03", "description": "MRI lower extremity joint without contrast", "code": "73721", "quantity": 1, "charge": 1450.00, "page": 1},
+      {"line_id": "L2", "service_date": "2026-10-03", "description": "MRI lower extremity joint without contrast", "code": "73721", "quantity": 1, "charge": 1450.00, "page": 1},
+      {"line_id": "L3", "service_date": "2026-10-03", "description": "Facility service charge", "code": null, "quantity": 1, "charge": 150.00, "page": 1}
+    ]
+  },
+  "eob": {
+    "claim_number": "CLM-1001",
+    "patient_responsibility_total": 320.00,
+    "lines": [
+      {"line_id": "E1", "service_date": "2026-10-03", "description": "MRI lower extremity joint without contrast", "code": "73721", "billed": 1450.00, "plan_paid": 900.00, "adjustment": 230.00, "patient_responsibility": 320.00},
+      {"line_id": "E2", "service_date": "2026-10-03", "description": "Facility service charge", "code": null, "billed": 150.00, "plan_paid": 0.00, "adjustment": 150.00, "patient_responsibility": 0.00}
+    ]
+  },
+  "patient_name": "Sample Patient",
+  "account_number": "ACCT-0001"
+}

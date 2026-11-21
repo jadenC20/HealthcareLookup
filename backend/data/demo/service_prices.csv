@@ -1,0 +1,4 @@
+provider_id,procedure_code,description,price,price_type,payer_name,plan_name,includes,insurance_status,source_url,retrieved_date,notes
+demo1,73721,MRI lower extremity joint without contrast,500.00,discounted_cash,,,facility fee only,unknown,DEMO,2026-11-20,fake price
+demo2,73721,MRI lower extremity joint without contrast,650.00,discounted_cash,,,facility fee only,unknown,DEMO,2026-11-20,fake price
+demo3,73721,MRI lower extremity joint without contrast,1800.00,gross_charge,,,facility plus radiologist reading,unknown,DEMO,2026-11-20,fake price

@@ -1,0 +1,4 @@
+provider_id,name,npi,provider_type,specialty,address,city,state,zip,phone,website,source_url,retrieved_date
+demo1,DEMO Imaging Center A,,facility,radiology,1 Example St,Philadelphia,PA,19100,,,DEMO,2026-11-20
+demo2,DEMO Imaging Center B,,facility,radiology,2 Example St,Philadelphia,PA,19100,,,DEMO,2026-11-20
+demo3,DEMO Hospital C,,facility,radiology,3 Example St,Philadelphia,PA,19100,,,DEMO,2026-11-20
