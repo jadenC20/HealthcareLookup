@@ -32,6 +32,18 @@ func TestConfigureOpenRouterSearchPlugin(t *testing.T) {
 	}
 }
 
+func TestConfigureOpenRouterPaidModelRouting(t *testing.T) {
+	p := map[string]any{"model": "deepseek/deepseek-v4.1-flash"}
+	configureOpenRouterPayload(p)
+	if p["model"] != "deepseek/deepseek-v4.1-flash" {
+		t.Fatal("selected paid model changed")
+	}
+	want := map[string]any{"require_parameters": true, "data_collection": "deny"}
+	if !reflect.DeepEqual(p["provider"], want) {
+		t.Fatalf("paid model blocked by price constraints or privacy changed: %#v", p["provider"])
+	}
+}
+
 func TestConfigureOpenRouterMergesSearchAndPDFPlugins(t *testing.T) {
 	p := map[string]any{
 		"plugins": []any{map[string]any{"id": "existing", "enabled": true}},

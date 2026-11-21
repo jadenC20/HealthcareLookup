@@ -82,14 +82,14 @@ func TestUnconfirmedCardDoesNotSilentlySelect(t *testing.T) {
 	fetch := &fakeFetcher{}
 	engine := Engine{AI: ai, Catalog: fakeCatalog{candidates: []Candidate{testCandidate()}}, Fetcher: fetch}
 	r := engine.Run(context.Background(), Document{}, nil)
-	if r.Status != "needs_confirmation" || fetch.calls != 0 || !hasCaution(r, "unconfirmed_details") {
+	if r.Status != "needs_details_confirmation" || len(r.Candidates) != 0 || fetch.calls != 0 || ai.searchCalls != 0 || !hasCaution(r, "unconfirmed_details") {
 		t.Fatalf("unexpected: %+v", r)
 	}
 }
 func TestMissingAIKeepsActionableCaution(t *testing.T) {
-	engine := Engine{AI: &fakeAI{extractionErr: stageError("openai_not_configured", "API key missing")}}
+	engine := Engine{AI: &fakeAI{extractionErr: stageError("ai_not_configured", "API key missing")}}
 	r := engine.Run(context.Background(), Document{}, nil)
-	if !r.MayBeInaccurate || !hasCaution(r, "openai_not_configured") || len(r.Cautions[0].Missing) == 0 {
+	if !r.MayBeInaccurate || !hasCaution(r, "ai_not_configured") || len(r.Cautions[0].Missing) == 0 {
 		t.Fatalf("unexpected: %+v", r)
 	}
 }

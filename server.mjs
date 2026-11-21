@@ -10,7 +10,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const allowed = new Set(['/index.html', '/app.js', '/connected.mjs', '/supabase-auth.mjs', '/assets/vendor/supabase.js', '/assets/vendor/supabase-LICENSE.txt', '/insurance-view.mjs', '/api-client.mjs', '/styles.css', '/connected.css', '/pages/overview.html', '/pages/bill.html', '/pages/care.html', '/pages/prescriptions.html', '/assets/map.svg', '/assets/material-symbols-outlined.woff2', ...['literata', 'nunito-sans'].flatMap(font => [400, 600, 700].map(weight => `/assets/${font}-latin-${weight}-normal.woff2`))]);
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' };
 export const apiPaths = /^(?:\/health|\/sample|\/providers|\/prices\/compare|\/data\/status|\/bills\/(?:analyze|ai-review)|\/bill-review\/(?:extract|analyze|observations)|\/care\/(?:recommendations|search)|\/care-search\/recommend|\/prescription-comparison\/(?:drugs|compare)|\/jobs(?:\/[a-zA-Z0-9-]+)?|\/results(?:\/[a-zA-Z0-9-]+)?|\/documents\/extract|\/auth\/(?:register|login|me|logout)|\/profile(?:\/preferences|\/insurance-card(?:\/file)?|\/insurance(?:\/(?:details|retry|select|sbc|context))?)?|\/account(?:\/pdf)?|\/reviews(?:\/[a-zA-Z0-9-]+(?:\/pdf)?)?|\/reports\/pdf)$/;
-export function createFrontendServer({ backendUrl = process.env.CLEARCARE_API_URL || 'http://127.0.0.1:8000', publicOrigin = process.env.CLEARCARE_PUBLIC_ORIGIN || '', assetRoot = root, supabaseConfig = publicSupabaseConfig() } = {}) {
+export function createFrontendServer({ backendUrl = process.env.CLEARCARE_API_URL || 'http://127.0.0.1:8000', publicOrigin = process.env.CLEARCARE_PUBLIC_ORIGIN || '', proxySecret = process.env.CLEARCARE_PROXY_SECRET || '', assetRoot = root, supabaseConfig = publicSupabaseConfig() } = {}) {
   const target = new URL(backendUrl);
   const publicUrl = publicOrigin ? new URL(publicOrigin) : null;
   if (publicUrl && (publicUrl.protocol !== 'https:' || publicUrl.username || publicUrl.password || publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash)) throw new Error('CLEARCARE_PUBLIC_ORIGIN must be an HTTPS origin without credentials or a path.');
@@ -30,10 +30,15 @@ export function createFrontendServer({ backendUrl = process.env.CLEARCARE_API_UR
       const origin = req.headers.origin;
       if (!validHosts.includes(req.headers.host) || (origin && !validOrigins.includes(origin)) || req.headers['sec-fetch-site'] === 'cross-site') { jsonError(res, 403, 'Origin not allowed.'); return; }
       if (Number(req.headers['content-length'] || 0) > 21 * 1024 * 1024) { jsonError(res, 413, 'Request exceeds 21 MB.'); return; }
-      // Validate the browser origin first; translate it to the Go API's own allowed origin.
+      // Hosted backends allow the public frontend origin and require the proxy's
+      // own secret. Never let a browser supply that backend credential.
       const headers = { ...req.headers, host: target.host };
-      if (origin) headers.origin = target.origin;
+      if (origin) headers.origin = publicUrl?.origin || target.origin;
       delete headers.connection;
+      delete headers.forwarded;
+      delete headers['x-forwarded-host'];
+      delete headers['x-clearcare-proxy-secret'];
+      if (proxySecret) headers['x-clearcare-proxy-secret'] = proxySecret;
       const upstream = (target.protocol === 'https:' ? https : http).request({ hostname: target.hostname, port: target.port, protocol: target.protocol, path: apiPath + requested.search, method: req.method, headers }, response => {
         res.writeHead(response.statusCode, { ...response.headers, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); response.pipe(res);
         response.on('error', () => res.destroy());

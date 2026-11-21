@@ -1,4 +1,4 @@
-// Run from the terminal where OPENAI_API_KEY is set. It stays in the process
+// Set OPENROUTER_API_KEY in .env or the backend terminal. It stays in the process
 // environment and is inherited by Go; never printed or sent to the frontend.
 import {loadEnvFile} from 'node:process';
 import {existsSync} from 'node:fs';

@@ -1,13 +1,13 @@
 # AI provider
 
-The default backend provider is OpenRouter, using exactly `google/gemma-4-31b-it:free` via `https://openrouter.ai/api/v1/responses`. Set `OPENROUTER_API_KEY` as a backend-only Render environment secret. Do not send it to Pages, browser JavaScript or Git. Optional configuration: `CLEARCARE_AI_PROVIDER=openrouter`, `OPENROUTER_MODEL=google/gemma-4-31b-it:free`.
+The default backend provider is Cloudflare Workers AI, using `@cf/meta/llama-4-scout-17b-16e-instruct`. Render sends REST requests to the private `https://clearcare-ai.agrigine-mcp.workers.dev/internal/ai` Worker. Configure `CLEARCARE_AI_PROVIDER=cloudflare`, `CLOUDFLARE_AI_MODEL`, and `CLOUDFLARE_AI_URL` on Render. The Worker uses an `AI` binding and the same backend-only `CLEARCARE_PROXY_SECRET` as Render. No AI API key is sent to browser code.
 
-Existing extraction, interpretation and explanation methods share this adapter. Strict output structures and downstream evidence checks remain in place. No live provider calls have been made without a key. Provider selection restricts inference pricing to zero and excludes endpoints permitting data collection. If this model has no privacy-compatible endpoint, requests fail rather than silently relaxing those restrictions or choosing a different model. This is not a guarantee of zero retention or suitability for regulated health data.
+Extraction, interpretation and explanation share this REST adapter. JSON output is checked against the backend schema, and downstream evidence checks remain in place. Cloudflare's free Workers AI allocation is limited; usage beyond account allowances can fail. The selected model and account configuration determine availability and billing.
 
-PDF inputs explicitly request OpenRouter's free `cloudflare-ai` file parser rather than its default paid OCR. Native image input uses the selected model. PDF parsing also sends document contents to the parser; review all provider terms before uploading real health records.
+PDF inputs use Cloudflare's Markdown conversion; image inputs use the model's vision support. Benefits and bill lines require supporting evidence. When PDF page locations are unavailable, the bridge must not invent page citations.
 
-Live web search is disabled for this configuration because external search tools can have separate charges. SBC discovery can still use the configured local plan catalog, and users may upload SBCs directly. Missing research returns the existing caution/fallback instead of invented source links. Paid search or another research integration requires a separate decision.
+Public research uses bounded search excerpts and only actual retrieved source URLs. SBC discovery also uses the configured local catalog, and users may upload SBCs directly. Missing research returns explicit limitations instead of invented source links.
 
-Legacy OpenAI configuration is available only with explicit `CLEARCARE_AI_PROVIDER=openai` and its corresponding backend credentials.
+OpenRouter and OpenAI remain optional explicit compatibility providers, using their respective backend-only credentials.
 
-Sources: [model endpoints](https://openrouter.ai/api/v1/models/google/gemma-4-31b-it:free/endpoints), [Responses API](https://openrouter.ai/docs/api_reference/responses/overview), [PDF processing](https://openrouter.ai/docs/guides/overview/multimodal/pdfs).
+Sources: [Cloudflare model](https://developers.cloudflare.com/workers-ai/models/llama-4-scout-17b-16e-instruct/), [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [Markdown conversion](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/).

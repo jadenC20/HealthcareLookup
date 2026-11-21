@@ -21,10 +21,23 @@ type OpenAI struct {
 }
 
 func NewOpenAI() *OpenAI {
-	if !strings.EqualFold(os.Getenv("CLEARCARE_AI_PROVIDER"), "openai") {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("CLEARCARE_AI_PROVIDER")))
+	if provider != "openai" && provider != "openrouter" {
+		model := strings.TrimSpace(os.Getenv("CLOUDFLARE_AI_MODEL"))
+		if model == "" {
+			model = "@cf/meta/llama-4-scout-17b-16e-instruct"
+		}
+		endpoint := strings.TrimSpace(os.Getenv("CLOUDFLARE_AI_URL"))
+		if endpoint == "" {
+			endpoint = "https://clearcare-ai.agrigine-mcp.workers.dev/internal/ai"
+		}
+		client := &http.Client{Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		return &OpenAI{Provider: "cloudflare", Key: strings.TrimSpace(os.Getenv("CLEARCARE_PROXY_SECRET")), Model: model, SearchModel: model, client: client, endpoint: endpoint}
+	}
+	if provider == "openrouter" {
 		model := strings.TrimSpace(os.Getenv("OPENROUTER_MODEL"))
 		if model == "" {
-			model = "google/gemma-4-31b-it:free"
+			model = "deepseek/deepseek-v4.1-flash"
 		}
 		return &OpenAI{Provider: "openrouter", Key: strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")), Model: model, SearchModel: model, client: &http.Client{Timeout: 90 * time.Second}, endpoint: "https://openrouter.ai/api/v1/responses"}
 	}
@@ -36,7 +49,7 @@ func NewOpenAI() *OpenAI {
 	if search == "" {
 		search = model
 	}
-	return &OpenAI{Key: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")), Model: model, SearchModel: search, client: &http.Client{Timeout: 90 * time.Second}, endpoint: "https://api.openai.com/v1/responses"}
+	return &OpenAI{Provider: "openai", Key: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")), Model: model, SearchModel: search, client: &http.Client{Timeout: 90 * time.Second}, endpoint: "https://api.openai.com/v1/responses"}
 }
 func (a *OpenAI) Extract(ctx context.Context, doc Document) (Extraction, error) {
 	var result Extraction
@@ -104,16 +117,15 @@ func fileInput(doc Document) map[string]any {
 }
 func (a *OpenAI) structured(ctx context.Context, instructions string, content []any, name string, schema any, dest any) error {
 	payload := map[string]any{"model": a.Model, "store": false, "max_output_tokens": 7000, "instructions": instructions, "input": []any{map[string]any{"role": "user", "content": content}}, "text": map[string]any{"format": map[string]any{"type": "json_schema", "name": name, "strict": true, "schema": schema}}}
-	if a.Provider == "openrouter" {
-		// Gemma supports JSON mode, but not provider-enforced JSON schemas.
-		// Keep the same contract in the prompt and validate it locally below.
+	if a.Provider == "openrouter" || a.Provider == "cloudflare" {
+		// Use JSON mode across compatible endpoints. Keep the same schema
+		// contract in the prompt and enforce it locally below.
 		rawSchema, err := json.Marshal(schema)
 		if err != nil {
 			return err
 		}
 		payload["instructions"] = instructions + "\nReturn only one JSON object matching this JSON schema exactly. Include every required field, use null only where permitted, and do not add fields or Markdown:\n" + string(rawSchema)
 		payload["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
-		payload["reasoning"] = map[string]any{"enabled": false}
 	}
 	response, err := a.call(ctx, payload)
 	if err != nil {
@@ -123,7 +135,7 @@ func (a *OpenAI) structured(ctx context.Context, instructions string, content []
 	if err != nil {
 		return err
 	}
-	if a.Provider == "openrouter" && !validateJSONSchema([]byte(text), schema) {
+	if (a.Provider == "openrouter" || a.Provider == "cloudflare") && !validateJSONSchema([]byte(text), schema) {
 		return stageError("invalid_ai_output", "The AI provider returned output that did not match the expected structure.")
 	}
 	dec := json.NewDecoder(strings.NewReader(text))
@@ -138,9 +150,12 @@ func (a *OpenAI) structured(ctx context.Context, instructions string, content []
 	return nil
 }
 func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) {
+	if a.Provider == "cloudflare" && a.Key == "" {
+		return nil, stageError("ai_not_configured", "Set the matching CLEARCARE_PROXY_SECRET on the backend and Cloudflare AI bridge to enable Workers AI.")
+	}
 	if a.Provider == "openrouter" {
 		if a.Key == "" {
-			return nil, stageError("ai_not_configured", "Set OPENROUTER_API_KEY on the backend to enable Gemma through OpenRouter.")
+			return nil, stageError("ai_not_configured", "Set OPENROUTER_API_KEY on the backend to enable AI through OpenRouter.")
 		}
 		if !strings.HasPrefix(a.Key, "sk-or-") || strings.ContainsAny(a.Key, "* \r\n") || strings.Contains(a.Key, "...") {
 			return nil, stageError("ai_key_incomplete", "The backend OpenRouter key is incomplete or invalid.")
@@ -149,11 +164,13 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 			configureOpenRouterPayload(p)
 		}
 	}
-	if a.Key == "" {
-		return nil, stageError("openai_not_configured", "OPENAI_API_KEY is not configured; automated reading and search could not run.")
-	}
-	if strings.Contains(a.Key, "*") || strings.Contains(a.Key, "...") || strings.HasPrefix(a.Key, "sb_") {
-		return nil, stageError("openai_key_incomplete", "OPENAI_API_KEY appears masked, incomplete, or is a Supabase key. Paste the full original OpenAI secret key into the backend terminal, without replacing characters, then restart.")
+	if a.Provider != "cloudflare" && a.Provider != "openrouter" {
+		if a.Key == "" {
+			return nil, stageError("openai_not_configured", "OPENAI_API_KEY is not configured; automated reading and search could not run.")
+		}
+		if strings.Contains(a.Key, "*") || strings.Contains(a.Key, "...") || strings.HasPrefix(a.Key, "sb_") {
+			return nil, stageError("openai_key_incomplete", "OPENAI_API_KEY appears masked, incomplete, or is a Supabase key. Paste the full original OpenAI secret key into the backend terminal, without replacing characters, then restart.")
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -163,7 +180,11 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+a.Key)
+	if a.Provider == "cloudflare" {
+		req.Header.Set("X-ClearCare-Proxy-Secret", a.Key)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+a.Key)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if a.Provider == "openrouter" {
 		req.Header.Set("HTTP-Referer", "https://clearcare.pages.dev")
@@ -175,8 +196,20 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if a.Provider == "cloudflare" {
+			message := "Cloudflare Workers AI could not complete the request. Check the model, AI binding and service availability."
+			switch resp.StatusCode {
+			case 401, 403:
+				message = "The Cloudflare AI bridge rejected backend authentication. Configure the same CLEARCARE_PROXY_SECRET on the backend and Cloudflare."
+			case 429:
+				message = "Cloudflare Workers AI reached its usage allowance or rate limit. Please retry later."
+			case 503:
+				message = "Cloudflare Workers AI is not configured or is temporarily unavailable. Please retry later."
+			}
+			return nil, stageError(fmt.Sprintf("cloudflare_http_%d", resp.StatusCode), message)
+		}
 		if a.Provider == "openrouter" {
-			message := "OpenRouter could not complete the request. Check the key, free-model quota, availability and privacy-compatible provider access."
+			message := "OpenRouter could not complete the request. Check the key, model quota, availability and privacy-compatible provider access."
 			if resp.StatusCode == 401 {
 				message = "OpenRouter rejected the backend credential. Set OPENROUTER_API_KEY on the Render backend and redeploy."
 			}
@@ -187,7 +220,10 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 				message = "No OpenRouter endpoint supports the configured model, request parameters and privacy settings."
 			}
 			if resp.StatusCode == 429 {
-				message = "OpenRouter or the model provider is limiting requests. Shared free-model capacity can be exhausted even when this key has no recorded usage. Please retry later."
+				message = "OpenRouter or the model provider is limiting requests. Please retry later."
+				if strings.HasSuffix(a.Model, ":free") {
+					message = "OpenRouter or the model provider is limiting requests. Shared free-model capacity can be exhausted even when this key has no recorded usage. Please retry later."
+				}
 			}
 			return nil, stageError(fmt.Sprintf("openrouter_http_%d", resp.StatusCode), message)
 		}
@@ -212,18 +248,38 @@ func responseText(response map[string]any) (string, []string, error) {
 	}
 	var text strings.Builder
 	sources := []string{}
+	seenSources := map[string]bool{}
+	appendSource := func(raw any) {
+		if source, ok := raw.(string); ok && source != "" && !seenSources[source] {
+			sources = append(sources, source)
+			seenSources[source] = true
+		}
+	}
+	appendAnnotations := func(raw any) {
+		annotations, _ := raw.([]any)
+		for _, annotation := range annotations {
+			a, _ := annotation.(map[string]any)
+			if a["type"] != "url_citation" {
+				continue
+			}
+			appendSource(a["url"])
+			// OpenRouter web results can retain the Chat Completions
+			// citation envelope when adapted to Responses messages.
+			if citation, ok := a["url_citation"].(map[string]any); ok {
+				appendSource(citation["url"])
+			}
+		}
+	}
 	output, _ := response["output"].([]any)
 	for _, item := range output {
 		m, _ := item.(map[string]any)
+		appendAnnotations(m["annotations"])
 		if m["type"] == "web_search_call" {
 			action, _ := m["action"].(map[string]any)
 			ss, _ := action["sources"].([]any)
 			for _, s := range ss {
 				v, _ := s.(map[string]any)
-				u, _ := v["url"].(string)
-				if u != "" {
-					sources = append(sources, u)
-				}
+				appendSource(v["url"])
 			}
 		}
 		content, _ := m["content"].([]any)
@@ -235,16 +291,7 @@ func responseText(response map[string]any) (string, []string, error) {
 			if p["type"] == "output_text" {
 				v, _ := p["text"].(string)
 				text.WriteString(v)
-				annotations, _ := p["annotations"].([]any)
-				for _, ann := range annotations {
-					a, _ := ann.(map[string]any)
-					if a["type"] == "url_citation" {
-						u, _ := a["url"].(string)
-						if u != "" {
-							sources = append(sources, u)
-						}
-					}
-				}
+				appendAnnotations(p["annotations"])
 			}
 		}
 	}

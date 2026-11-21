@@ -41,6 +41,9 @@ func profileDetails() insurance.Details {
 }
 func insuranceTestService(t *testing.T) (*Service, *http.Cookie, string, string) {
 	t.Helper()
+	t.Setenv("CLEARCARE_AI_PROVIDER", "cloudflare")
+	t.Setenv("CLEARCARE_PROXY_SECRET", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	s, err := Open(filepath.Join(t.TempDir(), "insurance.db"))
 	if err != nil {
@@ -124,15 +127,19 @@ func uploadRequest(cookie *http.Cookie, csrf, revision string) *http.Request {
 	r.AddCookie(cookie)
 	return r
 }
-func TestCardUploadAutomaticallyStartsLookup(t *testing.T) {
+func TestCardUploadRequiresDetailsConfirmationBeforeLookup(t *testing.T) {
 	s, cookie, csrf, _ := insuranceTestService(t)
 	w := httptest.NewRecorder()
 	s.UploadCard(w, uploadRequest(cookie, csrf, ""))
 	state := readState(t, w)
-	if state.Result.Status != "needs_confirmation" || len(state.Result.Candidates) != 1 {
-		t.Fatalf("lookup not started: %+v", state)
+	if state.Result.Status != "needs_details_confirmation" || len(state.Result.Candidates) != 0 || state.Result.DetailsConfirmed {
+		t.Fatalf("unconfirmed card started discovery: %+v", state)
 	}
-	w = insuranceCall(t, s.SelectInsurance, cookie, csrf, map[string]any{"revision": state.Revision, "candidate_id": state.Result.Candidates[0].ID})
+	w = insuranceCall(t, s.SelectInsurance, cookie, csrf, map[string]any{"revision": state.Revision, "candidate_id": "unconfirmed"})
+	if w.Code != 422 {
+		t.Fatal("candidate selection accepted before details confirmation")
+	}
+	w = insuranceCall(t, s.ConfirmInsurance, cookie, csrf, map[string]any{"revision": state.Revision, "details": state.Result.Details})
 	state = readState(t, w)
 	if state.Result.Status != "ready_with_caution" {
 		t.Fatalf("selection failed: %+v", state)
@@ -144,7 +151,7 @@ func TestMissingKeyPersistsCautionAndManualFallback(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.UploadSBC(w, uploadRequest(cookie, csrf, ""))
 	state := readState(t, w)
-	if state.Result.Status != "partial" || !strings.Contains(w.Body.String(), "openai_not_configured") || state.Result.Document == nil {
+	if state.Result.Status != "partial" || !strings.Contains(w.Body.String(), "ai_not_configured") || state.Result.Document == nil {
 		t.Fatalf("missing caution: %s", w.Body.String())
 	}
 	saved, err := s.loadInsurance(uid)

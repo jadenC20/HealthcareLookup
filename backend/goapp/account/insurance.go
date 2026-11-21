@@ -271,6 +271,10 @@ func (s *Service) SelectInsurance(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, "Select a candidate from the current lookup.")
 		return
 	}
+	if !state.Result.DetailsConfirmed {
+		fail(w, 422, "Confirm your plan details before selecting an SBC.")
+		return
+	}
 	revision, ok := s.startInsurance(w, u.ID, body.Revision, insurance.NewResult(state.Result.Details, state.Result.DetailsConfirmed))
 	if !ok {
 		return

@@ -15,7 +15,7 @@ export function createApi({ fetchImpl = globalThis.fetch, onUnauthorized = () =>
     if (csrf && !['GET', 'HEAD'].includes(method)) headers['X-CSRF-Token'] = csrf;
     let response;
     try { response = await fetchImpl('/api' + path, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : multipart ? body : JSON.stringify(body), signal }); }
-    catch (error) { if (error.name === 'AbortError') throw error; throw new ApiError('The API could not be reached. Start the Go backend and try again.'); }
+    catch (error) { if (error.name === 'AbortError') throw error; throw new ApiError('The healthcare API could not be reached. Please try again shortly.'); }
     if (!response.ok) {
       const text = await response.text(); let message;
       try { const data = JSON.parse(text); message = typeof data.detail === 'string' ? data.detail : undefined; } catch {}

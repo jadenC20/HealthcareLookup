@@ -4,6 +4,7 @@ import (
 	"clearcare/account"
 	"clearcare/billreview"
 	"clearcare/caresearch"
+	"clearcare/insurance"
 	"clearcare/prescription"
 	"crypto/subtle"
 	"encoding/json"
@@ -38,20 +39,9 @@ func main() {
 	}
 	defer accounts.Close()
 	mux := http.NewServeMux()
+	aiConfig := insurance.NewOpenAI()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		provider := os.Getenv("CLEARCARE_AI_PROVIDER")
-		if provider == "" {
-			provider = "openrouter"
-		}
-		configured := os.Getenv("OPENAI_API_KEY") != ""
-		model := os.Getenv("OPENAI_MODEL")
-		if provider == "openrouter" {
-			configured = os.Getenv("OPENROUTER_API_KEY") != ""
-			model = os.Getenv("OPENROUTER_MODEL")
-			if model == "" {
-				model = "google/gemma-4-31b-it:free"
-			}
-		}
+		provider, model, configured := aiConfig.Provider, aiConfig.Model, aiConfig.Key != ""
 		writeJSON(w, map[string]any{"status": "ok", "store": runtime.StoreMode, "ai": map[string]any{"provider": provider, "model": model, "configured": configured}, "features": map[string]bool{"supabase_auth": true, "insurance": true, "bill_review": true, "care_search": true, "prescription_comparison": true}, "configuration": map[string]bool{"supabase": os.Getenv("SUPABASE_URL") != "" && (os.Getenv("SUPABASE_PUBLISHABLE_KEY") != "" || os.Getenv("SUPABASE_ANON_KEY") != ""), "openai": provider == "openai" && configured, "ai": configured}})
 	})
 	mux.HandleFunc("GET /sample", func(w http.ResponseWriter, r *http.Request) {

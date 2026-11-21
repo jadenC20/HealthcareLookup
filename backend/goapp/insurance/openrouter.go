@@ -1,13 +1,18 @@
 package insurance
 
+import "strings"
+
 // configureOpenRouterPayload adapts Responses requests to OpenRouter without
 // changing the selected model or loosening the inference routing constraints.
 func configureOpenRouterPayload(p map[string]any) {
-	p["provider"] = map[string]any{
+	provider := map[string]any{
 		"require_parameters": true,
 		"data_collection":    "deny",
-		"max_price":          map[string]any{"prompt": 0, "completion": 0},
 	}
+	if model, _ := p["model"].(string); strings.HasSuffix(model, ":free") {
+		provider["max_price"] = map[string]any{"prompt": 0, "completion": 0}
+	}
+	p["provider"] = provider
 	plugins, _ := p["plugins"].([]any)
 	tools, _ := p["tools"].([]any)
 	for _, tool := range tools {

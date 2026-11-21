@@ -28,3 +28,10 @@ test('Supabase errors surface and an unconfigured app never tries to sign up',as
  const failure=createSupabaseAuth({fetchImpl:async()=>new Response(JSON.stringify(config)),createClient:()=>({auth:{onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),getSession:async()=>({data:{session:null}}),signInWithPassword:async()=>({error:{message:'Email not confirmed'}})}})});
  await failure.initialize();await assert.rejects(failure.signIn({email:'synthetic@example.test',password:'invalid'}),/Email not confirmed/);
 });
+test('an initial session response cannot restore an account after a newer sign-out event',async()=>{
+ let eventCallback,resolveSession;const changes=[];
+ const client=createSupabaseAuth({fetchImpl:async()=>new Response(JSON.stringify(config)),createClient:()=>({auth:{onAuthStateChange:callback=>{eventCallback=callback;return {data:{subscription:{unsubscribe(){}}}};},getSession:()=>new Promise(resolve=>{resolveSession=resolve;})}}),onChange:user=>changes.push(user)});
+ const initializing=client.initialize();while(!resolveSession)await new Promise(setImmediate);
+ eventCallback('SIGNED_OUT',null);resolveSession({data:{session:{user:{id:'stale-account'}}}});await initializing;
+ assert.equal(client.user,null);assert.deepEqual(changes,[null]);
+});

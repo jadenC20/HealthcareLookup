@@ -10,14 +10,14 @@ import (
 )
 
 // Explicit opt-in only: synthetic documents, public plan search, real API billing.
-func TestLiveOpenAI(t *testing.T) {
+func TestLiveAIProvider(t *testing.T) {
 	if os.Getenv("CLEARCARE_LIVE_TEST") != "1" {
-		t.Skip("set CLEARCARE_LIVE_TEST=1 to use OpenAI with synthetic documents")
-	}
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		t.Fatal("OPENAI_API_KEY must be configured")
+		t.Skip("set CLEARCARE_LIVE_TEST=1 to use the configured AI provider with synthetic documents")
 	}
 	ai := NewOpenAI()
+	if ai.Key == "" {
+		t.Fatal("the selected AI provider's backend API key must be configured")
+	}
 	pdf := func(text string) Document {
 		p := gofpdf.New("P", "mm", "A4", "")
 		p.AddPage()

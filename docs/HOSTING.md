@@ -29,7 +29,7 @@ Set the prompted environment variables through the hosting dashboard:
 - `CLEARCARE_ALLOWED_ORIGINS`: exact production Pages origin. Add another exact origin only when intentionally enabling it; do not use a wildcard preview origin.
 - `CLEARCARE_PROXY_SECRET`: shared with the Pages Function. Required for every backend endpoint except `/health`; this is additional protection, not a replacement for user authentication.
 - `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`: same public auth configuration.
-- `OPENAI_API_KEY`: backend secret only.
+- `CLEARCARE_AI_PROVIDER=cloudflare`, `CLOUDFLARE_AI_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct`, and `CLOUDFLARE_AI_URL=https://clearcare-ai.agrigine-mcp.workers.dev/internal/ai`. The private AI Worker uses an `AI` binding and the same `CLEARCARE_PROXY_SECRET` as Render; no expiring API token is needed by the backend. See [AI provider configuration](AI_PROVIDER.md).
 - `CLEARCARE_DOCUMENT_STORE=supabase`, `SUPABASE_STORAGE_BUCKET=clearcare-private`, and `SUPABASE_SERVICE_ROLE_KEY`: backend-only private storage configuration. The service refuses a public bucket.
 
 Do not add the `clearcare` schema to Supabase's exposed Data API schemas. Do not grant its private business tables to `anon` or `authenticated` database roles. Access is through the Go API's verified per-user authorization.

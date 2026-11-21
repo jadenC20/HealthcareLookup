@@ -143,6 +143,10 @@ func (s *Service) AIReview(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, "Confirm AI processing and enter 1–100 bill lines with a provider.")
 		return
 	}
+	if err := (billreview.ReviewRequest{Request: input.Request, Confirmed: true}).Validate(); err != nil {
+		fail(w, 422, err.Error())
+		return
+	}
 	for _, line := range input.Bill.Lines {
 		if line.ID == "" || line.Quantity == nil || *line.Quantity < 1 || line.Charge == nil || *line.Charge < 0 {
 			fail(w, 422, "Confirm each line ID, quantity, and charge.")

@@ -31,8 +31,8 @@ services:
       - key: SUPABASE_PUBLISHABLE_KEY
         sync: false
       - key: CLEARCARE_AI_PROVIDER
-        value: openrouter
-      - key: OPENROUTER_MODEL
-        value: google/gemma-4-31b-it:free
-      - key: OPENROUTER_API_KEY
-        sync: false
+        value: cloudflare
+      - key: CLOUDFLARE_AI_MODEL
+        value: '@cf/meta/llama-4-scout-17b-16e-instruct'
+      - key: CLOUDFLARE_AI_URL
+        value: https://clearcare-ai.agrigine-mcp.workers.dev/internal/ai

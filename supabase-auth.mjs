@@ -1,7 +1,7 @@
 // Passwords go only to Supabase. Go receives the access token for verification.
 export function createSupabaseAuth({createClient,fetchImpl=globalThis.fetch,onChange=()=>{}}={}){
  let client=null,currentUser=null,configuration={configured:false,detail:'Checking Supabase configuration…'};
- let subscription;
+ let subscription,identityRevision=0;
  const requireClient=()=>{if(!client)throw new Error(configuration.detail||'Supabase is not configured.');return client;};
  const unwrap=result=>{if(result.error)throw new Error(result.error.message||'Supabase could not complete this request.');return result.data;};
  return {
@@ -11,8 +11,8 @@ export function createSupabaseAuth({createClient,fetchImpl=globalThis.fetch,onCh
     if(!configuration.configured)return;
     if(typeof createClient!=='function')throw new Error('The Supabase SDK did not load. Refresh the page or restart the frontend server.');
     client=createClient(configuration.url,configuration.publishableKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce',storageKey:'clearcare-supabase-auth'}});
-    subscription=client.auth.onAuthStateChange((_event,session)=>{currentUser=session?.user||null;onChange(currentUser);}).data.subscription;
-    const data=unwrap(await client.auth.getSession());currentUser=data.session?.user||null;onChange(currentUser);
+    subscription=client.auth.onAuthStateChange((_event,session)=>{identityRevision++;currentUser=session?.user||null;onChange(currentUser);}).data.subscription;
+    const revision=identityRevision,data=unwrap(await client.auth.getSession());if(revision===identityRevision){currentUser=data.session?.user||null;onChange(currentUser);}
    }catch(error){configuration={configured:false,detail:error.message};throw error;}
   },
   async signUp({email,password,name,redirectTo}){return unwrap(await requireClient().auth.signUp({email,password,options:{data:{display_name:name},emailRedirectTo:redirectTo}}));},

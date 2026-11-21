@@ -97,3 +97,26 @@ func TestCareAIUsesStoredPlanAndOnlySourcedListings(t *testing.T) {
 		t.Fatal("plan not used or AI called on empty catalog", ai)
 	}
 }
+
+func TestAIReviewRejectsInvalidAmountsAndDuplicateLineIDsBeforeCallingAI(t *testing.T) {
+	s := supabaseTestService(t)
+	ai := &fakeHealthcareAI{}
+	s.healthAI = ai
+	for _, body := range []string{
+		`{"bill":{"provider_name":"Clinic","lines":[{"line_id":"L1","quantity":1,"charge":75},{"line_id":"L1","quantity":1,"charge":25}]},"ai_consent":true}`,
+		`{"bill":{"provider_name":"Clinic","stated_subtotal":-10,"lines":[{"line_id":"L1","quantity":1,"charge":75}]},"ai_consent":true}`,
+		`{"bill":{"provider_name":"Clinic","lines":[{"line_id":"L1","quantity":1,"charge":75}]},"eob":{"patient_responsibility_total":-10},"ai_consent":true}`,
+		`{"bill":{"provider_name":"Clinic","lines":[{"line_id":"L1","quantity":10001,"charge":75}]},"ai_consent":true}`,
+	} {
+		r := httptest.NewRequest("POST", "/bills/ai-review", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer first")
+		w := httptest.NewRecorder()
+		s.AIReview(w, r)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("invalid review accepted (%d): %s", w.Code, w.Body.String())
+		}
+	}
+	if ai.calls != 0 {
+		t.Fatal("invalid requests reached the AI provider")
+	}
+}
