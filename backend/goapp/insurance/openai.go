@@ -28,7 +28,7 @@ func NewOpenAI() *OpenAI {
 	if search == "" {
 		search = model
 	}
-	return &OpenAI{Key: os.Getenv("OPENAI_API_KEY"), Model: model, SearchModel: search, client: &http.Client{Timeout: 90 * time.Second}, endpoint: "https://api.openai.com/v1/responses"}
+	return &OpenAI{Key: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")), Model: model, SearchModel: search, client: &http.Client{Timeout: 90 * time.Second}, endpoint: "https://api.openai.com/v1/responses"}
 }
 func (a *OpenAI) Extract(ctx context.Context, doc Document) (Extraction, error) {
 	var result Extraction
@@ -119,6 +119,9 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	if a.Key == "" {
 		return nil, stageError("openai_not_configured", "OPENAI_API_KEY is not configured; automated reading and search could not run.")
 	}
+	if strings.Contains(a.Key, "*") || strings.Contains(a.Key, "...") || strings.HasPrefix(a.Key, "sb_") {
+		return nil, stageError("openai_key_incomplete", "OPENAI_API_KEY appears masked, incomplete, or is a Supabase key. Paste the full original OpenAI secret key into the backend terminal, without replacing characters, then restart.")
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -135,6 +138,9 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == 401 {
+			return nil, stageError("openai_http_401", "OpenAI rejected the API key. Set a valid OpenAI secret API key in the backend terminal, restart the backend, and retry. A Supabase key cannot authenticate with OpenAI.")
+		}
 		return nil, stageError(fmt.Sprintf("openai_http_%d", resp.StatusCode), "OpenAI could not complete the request. Check model access, credentials, quota, or service availability.")
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))

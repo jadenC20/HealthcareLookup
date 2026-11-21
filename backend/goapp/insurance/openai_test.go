@@ -66,12 +66,12 @@ func TestOpenAIFailures(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(status)
-				w.Write([]byte("secret provider detail"))
+				w.Write([]byte("provider_raw_private_detail_do_not_expose"))
 			}))
 			defer server.Close()
 			a := &OpenAI{Key: "fake", client: server.Client(), endpoint: server.URL}
 			_, err := a.Extract(context.Background(), Document{})
-			if err == nil || strings.Contains(err.Error(), "secret") {
+			if err == nil || strings.Contains(err.Error(), "provider_raw_private_detail_do_not_expose") {
 				t.Fatalf("unsafe error: %v", err)
 			}
 		})

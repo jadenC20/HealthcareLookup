@@ -34,6 +34,8 @@ type Service struct {
 	jobCancels map[string]context.CancelFunc
 	jobSem     chan struct{}
 	jobWG      sync.WaitGroup
+	supabase   *supabaseVerifier
+	healthAI   healthcareAI
 }
 type User struct {
 	ID    string `json:"id"`
@@ -65,12 +67,13 @@ func Open(path string) (*Service, error) {
 		db.Close()
 		return nil, err
 	}
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS insurance_workflows (user_id TEXT PRIMARY KEY, revision TEXT NOT NULL, result TEXT NOT NULL, document BLOB);`)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS insurance_workflows (user_id TEXT PRIMARY KEY, revision TEXT NOT NULL, result TEXT NOT NULL, document BLOB); CREATE TABLE IF NOT EXISTS ai_review_analyses (user_id TEXT NOT NULL, request_hash TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(user_id,request_hash));`)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	s := &Service{db: db, attempts: map[string][]time.Time{}, insurance: &insurance.Engine{AI: insurance.NewOpenAI(), Catalog: insurance.LoadCatalog(os.Getenv("CLEARCARE_PLAN_CATALOG")), Fetcher: insurance.NewFetcher()}, jobCancels: map[string]context.CancelFunc{}, jobSem: make(chan struct{}, 2)}
+	ai := insurance.NewOpenAI()
+	s := &Service{db: db, attempts: map[string][]time.Time{}, insurance: &insurance.Engine{AI: ai, Catalog: insurance.LoadCatalog(os.Getenv("CLEARCARE_PLAN_CATALOG")), Fetcher: insurance.NewFetcher()}, jobCancels: map[string]context.CancelFunc{}, jobSem: make(chan struct{}, 2), supabase: newSupabaseVerifier(), healthAI: ai}
 	if err := s.initFeatures(); err != nil {
 		db.Close()
 		return nil, err
@@ -150,6 +153,9 @@ func (s *Service) issue(w http.ResponseWriter, uid string) (string, error) {
 	return csrf, nil
 }
 func (s *Service) identity(w http.ResponseWriter, r *http.Request, mutate bool) (User, bool) {
+	if r.Header.Get("Authorization") != "" {
+		return s.supabaseIdentity(w, r)
+	}
 	var u User
 	cookie, e := r.Cookie("clearcare_session")
 	if e != nil {
@@ -245,6 +251,10 @@ func (s *Service) Me(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if r.Header.Get("Authorization") != "" {
+		respond(w, 200, map[string]any{"user": u, "csrf": ""})
+		return
+	}
 	c, _ := r.Cookie("clearcare_session")
 	var csrf string
 	if s.db.QueryRow(`SELECT csrf FROM sessions WHERE token=?`, hashToken(c.Value)).Scan(&csrf) != nil {
@@ -256,6 +266,10 @@ func (s *Service) Me(w http.ResponseWriter, r *http.Request) {
 func (s *Service) Logout(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.identity(w, r, true)
 	if !ok {
+		return
+	}
+	if r.Header.Get("Authorization") != "" {
+		respond(w, 200, map[string]bool{"ok": true})
 		return
 	}
 	c, _ := r.Cookie("clearcare_session")
@@ -292,7 +306,7 @@ func (s *Service) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	for _, query := range []string{`DELETE FROM charge_observations WHERE id IN (SELECT observation_id FROM observation_owners WHERE user_id=?)`, `DELETE FROM observation_owners WHERE user_id=?`, `DELETE FROM feature_jobs WHERE user_id=?`, `DELETE FROM feature_runs WHERE user_id=?`, `DELETE FROM patient_preferences WHERE user_id=?`, `DELETE FROM insurance_workflows WHERE user_id=?`, `DELETE FROM insurance_cards WHERE user_id=?`, `DELETE FROM reviews WHERE user_id=?`, `DELETE FROM sessions WHERE user_id=?`, `DELETE FROM users WHERE id=?`} {
+	for _, query := range []string{`DELETE FROM charge_observations WHERE id IN (SELECT observation_id FROM observation_owners WHERE user_id=?)`, `DELETE FROM observation_owners WHERE user_id=?`, `DELETE FROM feature_jobs WHERE user_id=?`, `DELETE FROM feature_runs WHERE user_id=?`, `DELETE FROM patient_preferences WHERE user_id=?`, `DELETE FROM ai_review_analyses WHERE user_id=?`, `DELETE FROM insurance_workflows WHERE user_id=?`, `DELETE FROM insurance_cards WHERE user_id=?`, `DELETE FROM reviews WHERE user_id=?`, `DELETE FROM sessions WHERE user_id=?`, `DELETE FROM users WHERE id=?`} {
 		if _, e = tx.Exec(query, u.ID); e != nil {
 			fail(w, 500, "Unable to delete account.")
 			return
@@ -310,12 +324,19 @@ func (s *Service) Save(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req billreview.Request
+	var req struct {
+		billreview.Request
+		SaveAI bool `json:"save_ai"`
+	}
 	if decode(r, &req) != nil || strings.TrimSpace(req.Bill.Provider) == "" || len(req.Bill.Lines) == 0 || len(req.Bill.Lines) > 200 {
 		fail(w, 422, "Add at least one reviewed bill line.")
 		return
 	}
-	payload, e := json.Marshal(map[string]any{"request": req, "analysis": billreview.Analyze(req)})
+	analysis := billreview.Analyze(req.Request)
+	if req.SaveAI {
+		analysis = s.savedAnalysis(u.ID, req.Request)
+	}
+	payload, e := json.Marshal(map[string]any{"request": req.Request, "analysis": analysis})
 	if e != nil {
 		fail(w, 422, "Invalid review.")
 		return
@@ -400,6 +421,11 @@ func pdf(w http.ResponseWriter, records []review, user *User) {
 			Analysis struct {
 				Findings []billreview.Finding `json:"findings"`
 				Inquiry  string               `json:"inquiry_draft"`
+				AI       struct {
+					Status string               `json:"status"`
+					Detail string               `json:"detail"`
+					Result insurance.BillAdvice `json:"result"`
+				} `json:"ai"`
 			} `json:"analysis"`
 		}
 		if json.Unmarshal(record.Payload, &payload) != nil {
@@ -411,6 +437,9 @@ func pdf(w http.ResponseWriter, records []review, user *User) {
 		p.MultiCell(0, 6, fmt.Sprintf("Claim: %s\n", payload.Request.Bill.Claim), "", "", false)
 		for _, l := range payload.Request.Bill.Lines {
 			p.MultiCell(0, 6, fmt.Sprintf("%s | %s | %s | %s | quantity %s | charge %s | page %v", l.ID, l.Date, l.Description, l.Code, optionalInt(l.Quantity), optionalMoney(l.Charge), pageNumber(l.Page)), "", "", false)
+			if l.Quote != "" {
+				p.MultiCell(0, 6, "AI-transcribed source quote for "+l.ID+": "+l.Quote, "", "", false)
+			}
 		}
 		if eob := payload.Request.EOB; eob != nil {
 			p.MultiCell(0, 6, fmt.Sprintf("EOB claim: %s", eob.Claim), "", "", false)
@@ -419,6 +448,15 @@ func pdf(w http.ResponseWriter, records []review, user *User) {
 			}
 			for _, l := range eob.Lines {
 				p.MultiCell(0, 6, fmt.Sprintf("%s | %s | %s | billed %s | paid %s | adjustment %s | patient %s", l.ID, l.Date, l.Description, optionalMoney(l.Billed), optionalMoney(l.Paid), optionalMoney(l.Adjustment), optionalMoney(l.Patient)), "", "", false)
+			}
+		}
+		if payload.Analysis.AI.Status == "completed" {
+			p.MultiCell(0, 6, "AI explanation: "+payload.Analysis.AI.Result.Summary, "", "", false)
+			for _, item := range payload.Analysis.AI.Result.Items {
+				p.MultiCell(0, 6, "Lines "+strings.Join(item.Lines, ", ")+": "+item.Explanation+" Question: "+item.Question, "", "", false)
+			}
+			for _, note := range payload.Analysis.AI.Result.Limitations {
+				p.MultiCell(0, 6, "AI limitation: "+note, "", "", false)
 			}
 		}
 		for _, f := range payload.Analysis.Findings {
@@ -468,12 +506,23 @@ func (s *Service) SavedPDF(w http.ResponseWriter, r *http.Request) {
 	pdf(w, []review{v}, nil)
 }
 func (s *Service) CurrentPDF(w http.ResponseWriter, r *http.Request) {
-	var req billreview.Request
+	var req struct {
+		billreview.Request
+		SaveAI bool `json:"save_ai"`
+	}
 	if decode(r, &req) != nil || strings.TrimSpace(req.Bill.Provider) == "" {
 		fail(w, 422, "Invalid review.")
 		return
 	}
-	b, _ := json.Marshal(map[string]any{"request": req, "analysis": billreview.Analyze(req)})
+	analysis := billreview.Analyze(req.Request)
+	if req.SaveAI {
+		u, ok := s.identity(w, r, false)
+		if !ok {
+			return
+		}
+		analysis = s.savedAnalysis(u.ID, req.Request)
+	}
+	b, _ := json.Marshal(map[string]any{"request": req.Request, "analysis": analysis})
 	pdf(w, []review{{Title: req.Bill.Provider, Payload: b}}, nil)
 }
 func (s *Service) AccountPDF(w http.ResponseWriter, r *http.Request) {
@@ -497,18 +546,6 @@ func (s *Service) AccountPDF(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pdf(w, records, &u)
-}
-func (s *Service) Extract(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.identity(w, r, true)
-	if !ok {
-		return
-	}
-	if !s.allowFeature(w, u.ID) {
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
-	defer cancel()
-	billreview.ExtractDocuments(ctx, w, r)
 }
 
 // UploadCard stores the card and starts extraction and SBC discovery immediately.

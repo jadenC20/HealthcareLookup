@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-type row map[string]any
+type row = map[string]any
 type Service struct {
 	providers, prices []row
 	reviews           []ReviewSummary
@@ -121,6 +122,13 @@ func (s *Service) Prices(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"detail":"procedure_code is required"}`, 422)
 		return
 	}
+	out, warnings := s.Compare(q)
+	jsonOut(w, row{"results": out, "warnings": warnings})
+}
+
+// Compare returns the same sourced rows used by the public price endpoint so
+// authenticated care guidance can add plan context without inventing listings.
+func (s *Service) Compare(q url.Values) ([]map[string]any, []string) {
 	out := []row{}
 	types := map[string]bool{}
 	includes := map[string]bool{}
@@ -178,5 +186,5 @@ func (s *Service) Prices(w http.ResponseWriter, r *http.Request) {
 	if demo {
 		warnings = append(warnings, "Some results are demonstration data, not real prices.")
 	}
-	jsonOut(w, row{"results": out, "warnings": warnings})
+	return out, warnings
 }

@@ -1,11 +1,27 @@
 {
-  "name": "clearcare-frontend",
-  "version": "0.1.0",
+  "name": "clearcare-terra-frontend",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node dev.mjs",
+    "dev": "node server.mjs",
     "start": "node server.mjs",
-    "check": "node --check app.js && node --check integration.js && node --check server.mjs && node --check dev.mjs"
+    "build": "tailwindcss -c tailwind.config.cjs -i styles/input.css -o styles.css --minify",
+    "check": "node --check app.js && node --check server.mjs && node --check api-client.mjs && node --check connected.mjs && node --check insurance-view.mjs && node --check supabase-auth.mjs && node --check auth-config.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "vendor:auth": "node scripts/vendor-supabase.mjs",
+    "backend": "node scripts/start-backend.mjs"
+  },
+  "devDependencies": {
+    "@fontsource/literata": "^5.3.0",
+    "@fontsource/nunito-sans": "^5.3.0",
+    "@material-symbols/font-400": "^0.49.0",
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/forms": "^0.5.11",
+    "tailwindcss": "^3.4.17"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.119.2",
+    "tesseract.js": "^6.0.1"
   }
 }

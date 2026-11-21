@@ -1,57 +1,76 @@
 # ClearCare
 
-ClearCare's Go backend supports three product workflows: **Bill Review**, **Care Search**, and **Prescription Comparison**. Accounts, insurance import, patient preferences, and private saved results support all three.
+ClearCare uses a JavaScript/HTML/CSS frontend, a local Node HTTP proxy, a Go healthcare API with SQLite, Supabase authentication, and OpenAI for document reading and explanations.
 
-| Feature | Backend behavior |
-|---|---|
-| Bill Review | OpenAI extraction of bills/images and optional EOB; confirmed arithmetic/EOB analysis; contextual imported price benchmarks and NCCI review flags; public reference search; AI explanation; private saved results and separate charge observations |
-| Care Search | CMS NPI Registry lookup, local directory fallback, AI web research, source-backed preference matching, optional patient-demographic cohort review matching |
-| Prescription Comparison | Public RxNorm product lookup and explicit product selection; AI web search for exact drug/quantity/location prices; source-filtered cash or coupon comparisons |
-| Insurance | Card extraction, SBC discovery/selection/download, cited interpretation, manual upload and retry |
+## Run this checkout
 
-These are implemented API flows, not a claim that all external data is available. Missing credentials, reference files, prices, or review demographics produce partial results with cautions. Web-extracted prices and provider attributes need confirmation. Patient demographic reviews are used only when explicitly self-reported aggregate data is supplied; demographics belong to the patient, never the searched doctor.
+Requires Node.js 20.12+ and Go 1.24+.
 
-The frontend has not been updated to expose the new feature APIs. Existing screens may still describe previously unavailable capabilities. No Python backend remains.
+The frontend server loads ignored root `.env` configuration. Use `.env.example` for `SUPABASE_URL` and the public `SUPABASE_PUBLISHABLE_KEY` (or legacy `SUPABASE_ANON_KEY`). Secret/service_role keys are rejected by the frontend configuration endpoint. The OpenAI key is never sent to the browser.
 
-## Start
+In the PowerShell terminal that will run Go:
 
-Requires Go 1.24+ and Node.js. Export `OPENAI_API_KEY` in the server environment and run:
-
-```sh
-npm run dev -- --demo
+```powershell
+$key = Read-Host "Paste the complete OpenAI API key" -AsSecureString
+$env:OPENAI_API_KEY = ([System.Net.NetworkCredential]::new("", $key).Password).Trim()
+npm run backend
 ```
 
-The frontend runs at `http://127.0.0.1:4173`, the Go API at `http://127.0.0.1:8000`. To run only the backend:
+Paste the full original key. SecureString masks the display; do not replace characters with asterisks or paste a placeholder. The launcher loads Supabase settings from root `.env` and inherits `OPENAI_API_KEY` from the terminal. It runs the updated `backend/goapp` in this checkout. Stop older servers on port 8000 first. Changes to Go source or keys require restarting it.
 
-```sh
-cd backend/goapp
-go run .
+In another terminal:
+
+```powershell
+npm run dev
 ```
 
-`CLEARCARE_GO` selects the Go executable for the launcher. Configuration is documented in [.env.example](.env.example); `.env` files are not automatically loaded. Demo mode selects fictional care CSVs; it does not disable real OpenAI/public API requests. OpenAI models default to `gpt-4.1` and can be configured. No additional Go dependencies are required for the public integrations.
+Open http://127.0.0.1:4182 (or the printed port). `PORT` configures the frontend; `CLEARCARE_API_URL` defaults to http://127.0.0.1:8000. Go binds loopback only; `CLEARCARE_ADDR` can select another loopback port.
 
-## Data and limitations
+In Supabase Authentication → URL Configuration, allow the actual frontend origin and email redirect URL, such as `http://127.0.0.1:4182/**`. PKCE confirmation must finish in the browser where signup began. Email confirmation settings remain controlled by Supabase.
 
-The default database is `backend/clearcare.db`. `CLEARCARE_DB` and `CLEARCARE_DATA_DIR` override database/reference paths. Product requests run as cancellable background jobs and successful results are saved privately. Completed results/jobs are retained for 90 days by default; `CLEARCARE_RESULT_RETENTION_DAYS` configures 1–3650 days. Patient preferences and saved results are private account data. Charge observation rows exclude patient IDs, names, claim numbers and dates; a separate ownership table provides private access. This linkage means the database as a whole is not anonymous.
+## One account for profile and insurance
 
-Imports are optional enhancements. Bill Review falls back to quoted public-source rates, then bill/EOB checks and billing questions when no applicable price is found. Public fallback rates are explicitly cautioned and excluded from charge observations. Care Search continues general matching without demographic-review data. The app does not automatically ingest arbitrary large hospital/TiC files. RxNorm identifies medications and does not supply retail prices. Public drug-price offers can be absent, outdated or conditional. NPI registration does not verify network participation, availability or clinical quality.
+Sign up/sign in uses the official pinned Supabase SDK. Passwords go directly to Supabase. The browser obtains the current access token for protected healthcare requests; Node forwards it to Go. Go verifies it against the configured project's `/auth/v1/user` endpoint and requires a confirmed, non-anonymous email identity. It opens a healthcare profile using a namespaced Supabase subject ID, with no second password or automatic email-based merging of old accounts. Invalid bearer credentials never fall back to a legacy cookie.
 
-## Documentation
+The account page provides display name, city, **Insurance plan**, insurance card/SBC tools, saved reviews and PDF export. The plan label is not verified coverage. Healthcare data is stored in the local SQLite database. The SDK manages authentication tokens in browser storage; healthcare documents are not stored there by the frontend. Deleting healthcare data does not delete the Supabase login account. Old cookie accounts remain supported by Go for compatibility, but the main UI uses Supabase only.
 
-- [Product behavior and decisions](docs/PRODUCT.md)
-- [Architecture and backend/frontend graphs](ARCHITECTURE.md)
-- [API contracts](docs/API.md)
-- [Operations and configuration](docs/OPERATIONS.md)
-- [Reference imports and public sources](backend/DATA_COLLECTION.md)
+## AI bill review
 
-## Verification
+1. Sign in and connect the healthcare profile.
+2. On Understand my bill, select a PDF/PNG/JPEG medical bill (max 10 MB), consent, and choose **Read bill with AI**.
+3. Go sends it to OpenAI and returns itemized fields, supporting quotes/pages, missing fields and warnings. Unknown amounts stay null and must be confirmed. The original bill file is not saved to the healthcare database by this extraction endpoint.
+4. Confirm/edit the fields or enter them manually. Optionally enter EOB data as JSON.
+5. Consent and choose **Review with AI**. Go combines bill checks with the account's saved insurance context; OpenAI returns explanations tied to bill line IDs, questions, limitations and an inquiry draft. Basic checks are separately available without AI.
+6. Save/export the review. Successful AI output is retained server-side by user and request hash for 24 hours so saving/exporting can include the same analysis. Saved reviews persist independently. AI findings are questions, not proof of errors or amounts owed.
 
-A Go build checks compilation. Tests and live endpoint checks for the new product flows are deferred at the user's request. Existing tests remain available:
+Requests: `POST /documents/extract`, `POST /bills/ai-review`; basic checks use `POST /bills/analyze`.
 
-```sh
+## Insurance-aware care search
+
+Enter a procedure code, city (defaults to saved city when omitted), and price type. With plan explanations enabled and consent, `GET /care/recommendations` loads sourced backend records and the signed-in user's saved plan and documented benefits. OpenAI explains relevant restrictions and questions, citing only returned listing and benefit indices. It does not generate prices or determine network/individual coverage. Empty datasets return a no-data state without inventing providers. Demo rows are excluded unless explicitly enabled. Standalone provider and price browsing remain available.
+
+The directory still needs sourced `providers.csv` and `service_prices.csv` records. `CLEARCARE_DEMO=1` selects the backend's explicit demo dataset. An API key does not supply real provider pricing.
+
+## Insurance document interpretation
+
+Account uploads accept PDF/PNG/JPEG cards and SBC PDFs. The backend identifies plan attributes, discovers candidate SBC documents, requires selection when ambiguous, and interprets benefits with quotes and page numbers. Review cautions, missing fields and plan identity before relying on the output. Downloads, retry, correction and deletion are available.
+
+## Connection and security
+
+Browser requests use same-origin `/api`; Node's allowlisted proxy validates the browser origin and forwards JSON/multipart/PDF data and authorization headers to Go. Go contacts Supabase for identity verification and OpenAI for AI operations. Supabase subjects scope profile, insurance, reviews and AI cache rows. Legacy cookie mutations still require CSRF. AI output references are validated, external-document fetching retains its existing SSRF safeguards, and OpenAI errors never expose raw provider details or keys. OpenAI calls use `store:false`; this does not represent a zero-retention guarantee.
+
+Root `.env` is ignored. Public config is limited to the Supabase project URL and publishable/anon key. Do not expose a secret/service_role or OpenAI key in frontend code. This server is for local development; hosted deployment requires HTTPS, appropriate origins and deployment configuration.
+
+## Validation and limitations
+
+```powershell
+npm run check
+npm test
 cd backend/goapp
 go test ./...
 go vet ./...
 ```
 
-The opt-in `CLEARCARE_LIVE_TEST=1 go test ./insurance -run TestLiveOpenAI -v` makes paid OpenAI calls with synthetic documents. The last live check returned 401 with the configured credential; live success is not verified.
+Tests use local fixtures and mocked Supabase/OpenAI responses. Optional live insurance tests require explicit `CLEARCARE_LIVE_TEST=1`; normal tests do not create cloud accounts, send email or make billable OpenAI calls. A live key returning 401 must be fixed before real AI outputs can be verified.
+
+Original visual examples remain inside closed, labeled preview panels. Prescription prices/coupons, booking, advocacy, live maps, computed savings and remaining deductible are not implemented. No sample output is shown as a user's actual result. `assets/vendor/supabase.js` is committed for local startup without runtime CDN access; update it with `npm run vendor:auth` after updating the pinned package.
