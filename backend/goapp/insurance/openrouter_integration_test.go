@@ -172,6 +172,22 @@ func TestOpenRouterHealthcareSchemas(t *testing.T) {
 	}
 }
 
+func TestDiscoveryAcceptsDirectCitedPDFWithoutSeparateSourcePage(t *testing.T) {
+	const pdfURL = "https://insurer.example/sbc.pdf"
+	search := response("An official SBC PDF was found.")
+	search["output"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)["annotations"] = []any{map[string]any{"type": "url_citation", "url": pdfURL}}
+	parsed := map[string]any{"candidates": []any{
+		map[string]any{"details": testDetails(), "url": pdfURL, "source_url": ""},
+		map[string]any{"details": testDetails(), "url": "https://insurer.example/invented.pdf", "source_url": ""},
+		map[string]any{"details": testDetails(), "url": pdfURL, "source_url": "https://insurer.example/unsupported-page"},
+	}}
+	ai := openRouterFixtureAI(t, []map[string]any{search, fixtureResponse(t, parsed)}, nil)
+	got, err := ai.Discover(context.Background(), testDetails())
+	if err != nil || len(got) != 1 || got[0].URL != pdfURL || got[0].SourceURL != pdfURL {
+		t.Fatalf("direct PDF provenance lost or unsupported source accepted: %+v %v", got, err)
+	}
+}
+
 func TestOpenRouterRejectsStructurallyIncompleteJSON(t *testing.T) {
 	ai := openRouterFixtureAI(t, []map[string]any{fixtureResponse(t, map[string]any{"details": testDetails()})}, nil)
 	if _, err := ai.Extract(context.Background(), Document{}); err == nil {

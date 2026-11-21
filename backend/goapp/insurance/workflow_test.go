@@ -93,15 +93,48 @@ func TestMissingAIKeepsActionableCaution(t *testing.T) {
 		t.Fatalf("unexpected: %+v", r)
 	}
 }
-func TestFallbackAndSourceFailureRemainVisible(t *testing.T) {
+func TestOptionalCatalogDoesNotWarnAfterSuccessfulWebDiscovery(t *testing.T) {
 	c := testCandidate()
 	c.Source = "web_search"
 	ai := &fakeAI{candidates: []Candidate{c}}
 	engine := Engine{AI: ai, Catalog: fakeCatalog{err: stageError("catalog_not_configured", "missing catalog")}, Fetcher: &fakeFetcher{}}
 	d := testDetails()
 	r := engine.Run(context.Background(), Document{}, &d)
-	if !hasCaution(r, "catalog_not_configured") || r.Status != "needs_confirmation" || len(r.Candidates) != 1 {
+	if hasCaution(r, "catalog_not_configured") || r.Status != "needs_confirmation" || len(r.Candidates) != 1 || ai.searchCalls != 1 {
 		t.Fatalf("unexpected: %+v", r)
+	}
+	for _, step := range r.Steps {
+		if step.Name == "catalog_lookup" && step.Status != "not_configured" {
+			t.Fatalf("optional catalog treated as a failure: %+v", step)
+		}
+	}
+}
+
+func TestConfiguredCatalogFailureIsOnlyReportedWhenDiscoveryFails(t *testing.T) {
+	for _, found := range []bool{false, true} {
+		ai := &fakeAI{}
+		if found {
+			c := testCandidate()
+			c.Source = "web_search"
+			ai.candidates = []Candidate{c}
+		}
+		engine := Engine{AI: ai, Catalog: fakeCatalog{err: stageError("catalog_unavailable", "configured catalog unavailable")}, Fetcher: &fakeFetcher{}}
+		d := testDetails()
+		result := engine.Run(context.Background(), Document{}, &d)
+		if hasCaution(result, "catalog_unavailable") == found {
+			t.Fatalf("catalog failure visibility does not reflect successful fallback: found=%v %+v", found, result)
+		}
+	}
+}
+
+func TestDiscoveryWorksWithoutCatalogAdapter(t *testing.T) {
+	c := testCandidate()
+	c.Source = "web_search"
+	engine := Engine{AI: &fakeAI{candidates: []Candidate{c}}, Fetcher: &fakeFetcher{}}
+	d := testDetails()
+	result := engine.Run(context.Background(), Document{}, &d)
+	if len(result.Candidates) != 1 || result.Status != "needs_confirmation" || hasCaution(result, "catalog_not_configured") {
+		t.Fatalf("optional catalog blocked web discovery: %+v", result)
 	}
 }
 func TestMismatchedYearWithholdsBenefits(t *testing.T) {

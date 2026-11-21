@@ -17,23 +17,68 @@ async function sameSecret(supplied,expected){
 }
 function sourceURL(value){try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.hostname==='localhost'||/^\d+\.\d+\.\d+\.\d+$/.test(u.hostname)||u.hostname.includes(':'))return '';return u.href;}catch{return '';}}
 function xmlText(value){return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi,(_,entity)=>{const named={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"};if(named[entity])return named[entity];const n=entity[1]?.toLowerCase()==='x'?parseInt(entity.slice(2),16):parseInt(entity.slice(1),10);return Number.isInteger(n)&&n>0&&n<=0x10ffff?String.fromCodePoint(n):'';}).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();}
-async function publicSearch(input,instructions){
- let query=typeof input==='string'?input:'';
- try{const fields=JSON.parse(query);if(fields&&typeof fields==='object'&&!Array.isArray(fields))query=['insurer','plan_name','plan_id','network','state','year','employer'].map(k=>fields[k]).filter(v=>typeof v==='string'||typeof v==='number').join(' ');}catch{}
- query=query.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,400);
- if(!query)return [];
- if(/Summary of Benefits and Coverage/i.test(instructions))query+=' "Summary of Benefits and Coverage" filetype:pdf';
+function searchLink(value,base){
  try{
-  const response=await fetch('https://www.bing.com/search?format=rss&q='+encodeURIComponent(query),{headers:{Accept:'application/rss+xml, application/xml'},redirect:'error',signal:AbortSignal.timeout(8000)});
-  if(!response.ok)return [];
-  const rss=await limitedText(response.body,256*1024),results=[],seen=new Set();
-  for(const item of rss.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)){
-   const field=name=>item[1].match(new RegExp('<'+name+'\\b[^>]*>([\\s\\S]*?)<\\/'+name+'>','i'))?.[1]||'';
-   const url=sourceURL(xmlText(field('link')));if(!url||seen.has(url))continue;seen.add(url);
-   results.push({url,title:xmlText(field('title')).slice(0,240),excerpt:xmlText(field('description')).slice(0,1200)});if(results.length===6)break;
+  let url=new URL(xmlText(value),base);
+  // Search engines encode the actual result URL in their tracking links.
+  // Decode that retrieved URL; never construct insurer/document paths.
+  if(/(^|\.)duckduckgo\.com$/.test(url.hostname)&&url.searchParams.has('uddg'))url=new URL(url.searchParams.get('uddg'));
+  else if(/(^|\.)bing\.com$/.test(url.hostname)&&url.pathname==='/ck/a'){
+   const encoded=url.searchParams.get('u')||'';if(!encoded.startsWith('a1'))return '';
+   const data=encoded.slice(2).replace(/-/g,'+').replace(/_/g,'/');url=new URL(atob(data.padEnd(Math.ceil(data.length/4)*4,'=')));
   }
-  return results;
- }catch{return [];}
+  if(/(^|\.)(?:bing\.com|duckduckgo\.com|google\.com)$/.test(url.hostname))return '';
+  return sourceURL(url.href);
+ }catch{return '';}
+}
+function parsedSearchResults(document,base){
+ const results=[],seen=new Set();
+ const append=(raw,title,excerpt)=>{const url=searchLink(raw,base);if(url&&!seen.has(url)){seen.add(url);results.push({url,title:xmlText(title).slice(0,240),excerpt:xmlText(excerpt).slice(0,1200)});}};
+ for(const item of document.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)){
+  const field=name=>item[1].match(new RegExp('<'+name+'\\b[^>]*>([\\s\\S]*?)<\\/'+name+'>','i'))?.[1]||'';
+  append(field('link'),field('title'),field('description'));if(results.length===8)return results;
+ }
+ if(results.length)return results;
+ // Bing can return HTML even when RSS was requested. DuckDuckGo's HTML and
+ // Lite surfaces use different result classes; accept both, not nav links.
+ const anchors=[...document.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)];
+ for(let i=0;i<anchors.length;i++){
+  const anchor=anchors[i],attrs=anchor[1];
+  const attribute=name=>attrs.match(new RegExp('\\b'+name+'\\s*=\\s*(["\\\'])([\\s\\S]*?)\\1','i'))?.[2]||'';
+  if(!/(?:^|\s)(?:result__a|result-link)(?:\s|$)/.test(attribute('class'))&&!/<h2\b[^>]*>\s*$/i.test(document.slice(Math.max(0,anchor.index-150),anchor.index)))continue;
+  const after=document.slice(anchor.index+anchor[0].length,Math.min(document.length,anchor.index+4000));
+  const snippet=after.match(/<(?:a|div|td)\b[^>]*class\s*=\s*["'][^"']*(?:result__snippet|result-snippet)[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|td)>/i)?.[1]||after.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i)?.[1]||'';
+  append(attribute('href'),anchor[2],snippet);if(results.length===8)break;
+ }
+ return results;
+}
+async function publicSearch(input,instructions){
+ let query=typeof input==='string'?input:Array.isArray(input)?input.flatMap(message=>Array.isArray(message?.content)?message.content.filter(part=>part?.type==='input_text'&&typeof part.text==='string').map(part=>part.text):[]).join(' '):'';
+ let relaxed='';
+ try{const fields=JSON.parse(query);if(fields&&typeof fields==='object'&&!Array.isArray(fields)){
+  const values=keys=>keys.map(key=>fields[key]).filter(value=>typeof value==='string'&&value.trim()||typeof value==='number'&&value>0).join(' ');
+  query=values(['insurer','plan_name','plan_id','state','year']);
+  // Network and employer labels often do not occur on the public SBC itself.
+  relaxed=values(['insurer','plan_id','year'])||query;
+ }}catch{}
+ query=query.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,400);relaxed=relaxed.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,300)||query;
+ if(!query)return [];
+ const sbc=/Summary of Benefits and Coverage/i.test(instructions);
+ const exact=sbc?query+' "Summary of Benefits and Coverage" filetype:pdf':query;
+ const broad=sbc?relaxed+' SBC benefits coverage PDF':query;
+ const attempts=[['https://www.bing.com/search?format=rss&q=',exact],['https://html.duckduckgo.com/html/?q=',broad],['https://lite.duckduckgo.com/lite/?q=',broad]];
+ const results=[],seen=new Set(),deadline=Date.now()+16000;
+ for(const [base,searchQuery]of attempts){
+  const remaining=deadline-Date.now();if(remaining<=0)break;
+  try{
+   const response=await fetch(base+encodeURIComponent(searchQuery),{headers:{Accept:'application/rss+xml, application/xml, text/html'},redirect:'error',signal:AbortSignal.timeout(Math.min(6000,remaining))});
+   if(!response.ok)continue;
+   for(const result of parsedSearchResults(await limitedText(response.body,256*1024),base))if(!seen.has(result.url)){seen.add(result.url);results.push(result);}
+   if(results.length&&(!sbc||results.some(result=>/\.pdf(?:[?#]|$)/i.test(result.url))))break;
+  }catch{}
+ }
+ if(sbc)results.sort((a,b)=>Number(/\.pdf(?:[?#]|$)/i.test(b.url))-Number(/\.pdf(?:[?#]|$)/i.test(a.url)));
+ return results.slice(0,8);
 }
 function pdfPages(text){
  // Form-feed characters identify actual page boundaries. Explicit page labels

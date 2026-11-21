@@ -56,6 +56,42 @@ test('search supplies retrieved public evidence and only real source annotations
  assert.ok(query.startsWith('https://www.bing.com/search?'));assert.ok(decodeURIComponent(query).includes('Synthetic 2026'));assert.deepEqual(part.annotations,[{type:'url_citation',url:'https://insurer.example/real.pdf'}]);assert.ok(!part.text.includes('invented.example'));assert.match(options.messages.at(-1).content,/UNTRUSTED PUBLIC SEARCH EVIDENCE/);
 });
 
+test('SBC search falls back to DuckDuckGo HTML and decodes the actual PDF URL',async t=>{
+ const originalFetch=globalThis.fetch,queries=[];t.after(()=>{globalThis.fetch=originalFetch;});
+ const document='https://insurer.example/coverage/2026/sbc.pdf?variant=Silver&state=NY';
+ globalThis.fetch=async url=>{queries.push(url);if(url.includes('bing.com'))return new Response('Unavailable',{status:503});return new Response('<div class="result"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg='+encodeURIComponent(document)+'&amp;rut=tracking">Official SBC</a><a class="result__snippet">Individual plan benefits &amp; coverage.</a></div>');};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'Document: '+document})}};
+ const part=await output(await worker.fetch(request({instructions:'Find Summary of Benefits and Coverage documents.',input:JSON.stringify({insurer:'Synthetic',plan_name:'Long plan display label',plan_id:'12345NY0010001',network:'Unhelpful network label',employer:'An unrelated employer',state:'NY',year:2026}),tools:[{type:'web_search'}]}),env));
+ assert.equal(queries.length,2);assert.ok(queries[1].startsWith('https://html.duckduckgo.com/html/'));const query=new URL(queries[1]).searchParams.get('q');assert.match(query,/Synthetic 12345NY0010001 2026 SBC/);assert.doesNotMatch(query,/Long plan|Unhelpful|unrelated/);
+ assert.deepEqual(part.annotations,[{type:'url_citation',url:document}]);
+});
+
+test('Bing HTML returned in place of RSS still yields its exact decoded source',async t=>{
+ const originalFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=originalFetch;});let calls=0;
+ const document='https://state.example.gov/benefits/sbc.pdf';
+ globalThis.fetch=async()=>{calls++;return new Response('<li class="b_algo"><h2><a target="_blank" href="https://www.bing.com/ck/a?u=a1'+btoa(document).replace(/=/g,'')+'&amp;ntb=1">State benefit document</a></h2><p>Summary of benefits for 2026.</p></li>');};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:document})}};
+ const part=await output(await worker.fetch(request({instructions:'Find Summary of Benefits and Coverage documents.',input:'Synthetic plan 2026',tools:[{type:'web_search'}]}),env));
+ assert.equal(calls,1);assert.deepEqual(part.annotations,[{type:'url_citation',url:document}]);
+});
+
+test('DuckDuckGo Lite is tried after a challenge page and excludes navigation and unsafe URLs',async t=>{
+ const originalFetch=globalThis.fetch,queries=[];t.after(()=>{globalThis.fetch=originalFetch;});
+ const document='https://insurer.example/sbc-2026.pdf';
+ globalThis.fetch=async url=>{queries.push(url);if(url.includes('bing.com'))return new Response('<rss><channel></channel></rss>');if(url.includes('html.duckduckgo'))return new Response('<h1>Please solve this challenge</h1>');return new Response('<a href="https://duckduckgo.com/settings" class="result-link">Navigation</a><a href="javascript:alert(1)" class="result-link">Unsafe</a><a href="https://secret@insurer.example/private.pdf" class="result-link">Credentials</a><tr><td><a rel="nofollow" href="'+document+'" class=\'result-link\'>Official plan SBC</a></td></tr><tr><td class=\'result-snippet\'>2026 plan coverage.</td></tr>');};
+ let evidence;const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async(_,options)=>{evidence=options.messages.at(-1).content;return {response:document};}}};
+ const part=await output(await worker.fetch(request({instructions:'Find Summary of Benefits and Coverage documents.',input:[{role:'user',content:[{type:'input_text',text:'Synthetic plan 2026'}]}],tools:[{type:'web_search'}]}),env));
+ assert.equal(queries.length,3);assert.ok(queries[2].startsWith('https://lite.duckduckgo.com/lite/'));assert.deepEqual(part.annotations,[{type:'url_citation',url:document}]);assert.match(evidence,/2026 plan coverage/);assert.doesNotMatch(evidence,/javascript:|secret@|duckduckgo.com\/settings/);
+});
+
+test('SBC discovery keeps looking past landing pages and prioritizes a retrieved PDF',async t=>{
+ const originalFetch=globalThis.fetch;let calls=0;t.after(()=>{globalThis.fetch=originalFetch;});
+ globalThis.fetch=async()=>{calls++;return calls===1?new Response('<rss><channel><item><title>Insurer documents</title><link>https://insurer.example/documents</link><description>Find plan coverage.</description></item></channel></rss>'):new Response('<a class="result__a" href="https://insurer.example/plan.pdf">2026 SBC</a>');};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'https://insurer.example/plan.pdf'})}};
+ const part=await output(await worker.fetch(request({instructions:'Find Summary of Benefits and Coverage documents.',input:'Synthetic plan 2026',tools:[{type:'web_search'}]}),env));
+ assert.equal(calls,2);assert.deepEqual(part.annotations.map(row=>row.url),['https://insurer.example/plan.pdf','https://insurer.example/documents']);
+});
+
 test('failed search still runs AI and never fabricates source citations',async t=>{
  const originalFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=originalFetch;});globalThis.fetch=async()=>new Response('Unavailable',{status:503});let calls=0;
  const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async(_,options)=>{calls++;assert.match(options.messages.at(-1).content,/No search sources/);return {response:'No supported sources were found.'};}}};

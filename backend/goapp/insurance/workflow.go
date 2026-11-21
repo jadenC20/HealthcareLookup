@@ -2,6 +2,7 @@ package insurance
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 )
@@ -61,9 +62,18 @@ func (e *Engine) discover(ctx context.Context, r *Result) {
 		r.step("discovery", "blocked")
 		return
 	}
-	candidates, err := e.Catalog.Find(ctx, r.Details)
-	if err != nil {
-		r.failure("catalog_lookup", err)
+	var candidates []Candidate
+	var catalogErr error
+	if e.Catalog != nil {
+		candidates, catalogErr = e.Catalog.Find(ctx, r.Details)
+	}
+	var stage *StageError
+	if e.Catalog == nil || errors.As(catalogErr, &stage) && stage.Code == "catalog_not_configured" {
+		// The catalog is optional; online discovery is a supported path.
+		r.step("catalog_lookup", "not_configured")
+		catalogErr = nil
+	} else if catalogErr != nil {
+		r.step("catalog_lookup", "unavailable")
 	} else {
 		r.step("catalog_lookup", "completed")
 	}
@@ -90,6 +100,9 @@ func (e *Engine) discover(ctx context.Context, r *Result) {
 		}
 	}
 	if len(r.Candidates) == 0 {
+		if catalogErr != nil {
+			r.failure("catalog_lookup", catalogErr)
+		}
 		r.step("plan_match", "missing")
 		r.warn("plan_match", "no_candidates", "No supported SBC candidate was found.", "Supply the exact plan details or upload an SBC from your insurer.", "sbc_document")
 		return
