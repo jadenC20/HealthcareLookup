@@ -1,45 +1,33 @@
-# ClearCare MCP connection (initial scaffold)
+# ClearCare MCP server (Cloudflare Workers)
 
-Status: implemented as an opt-in Go handler, **not mounted or deployed by default**. No tests or verification suites were run for this change.
+Endpoint: `https://clearcare-mcp.agrigine-mcp.workers.dev/mcp`. The code lives in [mcp/](../mcp/): `worker.mjs` is the protocol handler and `tools.mjs` is the tool table.
 
-The handler implements stateless JSON responses for the MCP 2025-11-25 Streamable HTTP protocol: `initialize`, `ping`, `tools/list`, `tools/call`, initialized/cancelled notifications. GET returns 405; there are no sessions or SSE streams. No new dependencies.
+It speaks stateless MCP Streamable HTTP with JSON responses (protocol 2025-11-25, 2025-06-18 and 2025-03-26). Supported methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list` and `prompts/get`. It has no sessions and no SSE.
 
-## Initial tools
+## Auth
 
-- `clearcare_connection_info`: reports connection capabilities, no personal information.
-- `clearcare_insurance_context`: optional sensitive read of the signed-in user's existing insurance context, including its coverage cautions. Disabled unless explicitly configured. No raw cards, member IDs, file downloads, account enumeration, write tools, AI processing, or bill records are exposed.
+Private tools need the user's ClearCare (Supabase) access token in `Authorization: Bearer …`. The Worker sends that token to the Render backend along with the deployment proxy secret, so the backend still runs its own per-user checks. Callers can't pick a user ID, an upstream host or a route outside the tool table. The public tools work without a token: health, sample bill, data status, providers, service prices and quick bill check.
 
-The endpoint requires a Supabase user bearer token on **every request**, verified through the existing account service. Cookies and deployment proxy secrets alone cannot authorize MCP. Existing per-user ownership checks remain in place; callers cannot provide a different user ID. Origin validation uses an exact allowlist. Never log access tokens, tool results, or medical information.
+## Coverage
 
-## Integration
+Each backend route has a tool (47 in all). The groups are account and profile, preferences, insurance card/SBC workflow, bill extraction/analysis/reviews/PDFs, care search and recommendations, drug lookup and comparison, medicine price search with nearby-pharmacy and delivery suggestions, and jobs and saved results.
 
-In the Go API entry point, import `clearcare/mcpserver` and mount only behind an explicit feature flag:
+- Long-running tools (extract bill, analyze bill, recommend care, compare prescription, find medicine prices) wait up to about 50 s for their job by default. Pass `wait: false` to get the job back right away, then use `clearcare_get_job`.
+- For file uploads, send base64 in `*_file_base64` plus `*_content_type` (PDF/PNG/JPEG, 10 MB max).
+- Downloads come back as embedded `resource` blobs.
+- Deleting the account requires `confirm: "DELETE MY ACCOUNT"`.
 
-```go
-if os.Getenv("CLEARCARE_MCP_ENABLED") == "1" {
-    mux.Handle("/mcp", mcpserver.New(mcpserver.Config{
-        Authenticate: accounts.Me,
-        // Leave sensitive reads disabled for initial connector setup.
-        // InsuranceContext: accounts.InsuranceContext,
-        // AllowSensitiveReads: true,
-        AllowedOrigins: []string{"https://clearcare.pages.dev"},
-    }))
-}
+Resources: `clearcare://profile`, `preferences`, `insurance`, `reviews`, `results`, `jobs` and `health`. Prompts: `cheapest_medicine_near_me`, `review_my_bill` and `find_care`.
+
+## Deploy
+
+```bash
+cd mcp && npx wrangler deploy
+npx wrangler secret put CLEARCARE_PROXY_SECRET   # same value as Render/Pages
 ```
 
-Keep the existing backend origin and deployment proxy-secret middleware. The frontend proxy must explicitly permit `/api/mcp` and forward `Authorization`, `MCP-Protocol-Version`, `Accept`, and `Content-Type`; its fixed backend routing must not accept arbitrary upstream targets. Only the proxy supplies its deployment secret. Clients must connect over HTTPS.
+`CLEARCARE_API_URL` and `MCP_ALLOWED_ORIGINS` are set in `mcp/wrangler.toml`.
 
-Controlled first-party clients may use a short-lived authenticated user's token in the `Authorization: Bearer ...` header. Do not paste real tokens in chat, committed connector configuration, or public examples. This is not an API-key login flow and must not accept Supabase service-role or publishable keys as user credentials.
+## Not yet done
 
-## Required before general-purpose assistant connections
-
-This is a scaffold, **not a completed remote OAuth connector**. Most hosted AI assistants need a browser authorization flow rather than a manually supplied user token. Add:
-
-1. A dedicated MCP authorization/resource boundary, OAuth protected-resource metadata, issuer discovery, PKCE, audience validation and narrowly scoped delegated tokens. Do not simply forward third-party OAuth tokens to unrelated services or reuse a Supabase service key for authorization.
-2. Per-user connection grants and explicit consent for each sensitive tool scope, expiration, revocation and a profile UI showing active connections. A model-generated `consent: true` argument is not user authorization.
-3. Per-user/client rate limiting, metadata-only audit events, abuse protection and assistant-client interoperability/security validation before enabling publicly.
-4. Visible disclosure that retrieved health information will be shared with the connected assistant. Preserve insurance uncertainty warnings, minimize fields, treat external text as untrusted, and keep write/delete/upload tools unavailable until separately designed and approved.
-
-Until these exist, keep sensitive reads off and restrict any pilot to trusted first-party clients. The MCP code does not itself opt users into AI processing or make any model calls.
-
-References: [MCP transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools), [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+The server has no OAuth authorization server. Hosted connectors that require a browser OAuth flow need one to be added before they can connect. Until then, use clients that let you set a Bearer header.

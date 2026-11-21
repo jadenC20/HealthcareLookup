@@ -1,0 +1,14 @@
+name = "clearcare-mcp"
+main = "worker.mjs"
+compatibility_date = "2026-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Public HTTPS origin of the Go backend (same one the Pages proxy uses).
+CLEARCARE_API_URL = "https://clearcare-api-u35j.onrender.com"
+# Comma-separated browser origins allowed to call the MCP endpoint.
+# Server-to-server MCP clients send no Origin and are always allowed.
+MCP_ALLOWED_ORIGINS = "https://clearcare.pages.dev,https://claude.ai"
+
+# Secret (set with: npx wrangler secret put CLEARCARE_PROXY_SECRET --config mcp/wrangler.toml)
+# CLEARCARE_PROXY_SECRET
