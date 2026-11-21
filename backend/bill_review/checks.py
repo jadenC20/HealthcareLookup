@@ -1,7 +1,7 @@
 import re
 from collections import defaultdict
 
-from models import Bill, EOB, Finding
+from bill_review.models import Bill, EOB, Finding
 
 # Words that make a charge hard to understand
 VAGUE_PATTERNS = [

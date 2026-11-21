@@ -46,6 +46,11 @@ This is a loopback-only hackathon application, not a production patient portal. 
 - `integration.js`: API-backed screens, account forms, extraction editor, saved records, PDF downloads
 - `server.mjs`: loopback-only static server and backend proxy
 - `dev.mjs`: starts frontend and backend together
-- `backend/`: document extraction/OCR, accounts, SQLite storage, API, checks, reports, tests
+- `backend/bill_review/`: bill extraction, analysis, saved reviews, and reports
+- `backend/care_search/`: provider and price APIs and CSV loading
+- `backend/account/`: accounts, sessions, profile, and account export
+- `backend/main.py` and `backend/database.py`: application composition and shared SQLite storage
+- `backend/tests/`: backend tests
+- `ARCHITECTURE.md`: frontend and backend graphs and data flows
 
 No external fonts, analytics, or cloud document services are used. The one-time package/model installation needs internet access.

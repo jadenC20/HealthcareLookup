@@ -2,7 +2,7 @@
 Loads the CSV files you collect into the database and tells you what is wrong.
 
 Run it by hand to check your data:
-    python loader.py data/providers.csv data/service_prices.csv
+    python -m care_search.loader data/providers.csv data/service_prices.csv
 """
 import csv
 import os

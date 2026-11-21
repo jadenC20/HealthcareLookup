@@ -22,7 +22,7 @@ def ocr(image):
     try:
         return pytesseract.image_to_string(ImageOps.exif_transpose(image).convert('RGB'), timeout=25)
     except pytesseract.TesseractNotFoundError:
-        here=Path(__file__).resolve().parent
+        here=Path(__file__).resolve().parent.parent
         if not (here/'ocr-data/eng.traineddata.gz').exists():
             raise HTTPException(503,'Run node backend/setup-ocr.mjs once to install the local OCR model.')
         data=io.BytesIO()

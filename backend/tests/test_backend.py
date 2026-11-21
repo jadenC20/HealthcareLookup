@@ -4,8 +4,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from models import Bill, EOB
-from checks import run_all_checks
+from bill_review.models import Bill, EOB
+from bill_review.checks import run_all_checks
 
 SAMPLE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sample", "bill_with_problems.json")
 
@@ -96,7 +96,7 @@ def test_loader_and_price_compare(tmp_path, monkeypatch):
     import importlib
     import database
     importlib.reload(database)
-    import loader
+    from care_search import loader
     importlib.reload(loader)
 
     conn = database.get_connection()
@@ -122,7 +122,7 @@ def test_loader_reports_bad_rows(tmp_path, monkeypatch):
     import importlib
     import database
     importlib.reload(database)
-    import loader
+    from care_search import loader
     importlib.reload(loader)
 
     providers = tmp_path / "providers.csv"

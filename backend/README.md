@@ -19,11 +19,11 @@ Open http://localhost:8000/docs to try the endpoints.
 | GET /providers | Lists providers. Optional `city` and `specialty`. |
 | GET /prices/compare | Needs `procedure_code`. Optional `city` and `price_type`. Returns prices plus warnings when results are not comparable. |
 | GET /data/status | Shows how many rows loaded and any CSV errors. |
-| POST /data/reload | Reloads the CSV files after you edit them. |
+| POST /data/reload | Disabled; restart the backend to reload CSV files. |
 
 Try the analyze endpoint with `sample/bill_with_problems.json`.
 
-## Checks in checks.py
+## Checks in bill_review/checks.py
 
 - Possible duplicate charge
 - Line items do not match the subtotal
@@ -69,3 +69,7 @@ PDFs, PNGs, and JPEGs are validated and processed locally. PDFs use their text l
 - Verified insurer/network feeds
 - Email verification and password recovery for public deployment
 - Original-document retention (intentionally not implemented)
+
+## Code layout
+
+`main.py` composes the `bill_review`, `care_search`, and `account` routers. Each feature package owns its API routes; `database.py` provides shared SQLite access. Prescription pricing is not connected and has no backend service. API paths remain unchanged. See the root `ARCHITECTURE.md` for dependency graphs.
