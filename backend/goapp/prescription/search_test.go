@@ -63,7 +63,7 @@ func TestMedicineNameOnlySearchGroundsAndSortsRetrievedPrices(t *testing.T) {
 	if ai.input["search_text"] != "Research summary" || len(ai.input["source_excerpts"].(map[string]string)) != 2 || len(ai.input["source_urls"].([]string)) != 2 {
 		t.Fatal("raw search evidence was not explicitly included in structured extraction")
 	}
-	if !strings.Contains(ai.query, `"metformin 500mg tablets"`) || len(ai.query) >= 260 || ai.searchCalls != 1 || ai.structuredCalls != 1 {
+	if !strings.Contains(ai.query, "metformin 500mg tablets") || len(ai.query) >= 260 || ai.searchCalls != 1 || ai.structuredCalls != 1 {
 		t.Fatal("simple search did not use a concise medicine query or introduced extra product-selection steps")
 	}
 }
@@ -138,5 +138,34 @@ func TestMedicineSearchInputAndAmountValidation(t *testing.T) {
 	}
 	if medicinePriceInQuote("metformin $9.999", 9.99) || medicinePriceInQuote("metformin 500mg", 500) || medicinePriceInQuote("metformin save $20", 20) || medicinePriceInQuote("metformin price $12, save $20", 20) || medicinePriceInQuote("metformin $20 shipping", 20) || medicinePriceInQuote("metformin $12", math.NaN()) {
 		t.Fatal("price parsing accepted an unsupported amount")
+	}
+}
+
+func TestMedicineSearchSeparatesRequestedPackCountFromProductStrength(t *testing.T) {
+	const source = "https://pharmacy.example/metformin"
+	for _, test := range []struct {
+		quantity, quote string
+		wantPrice       bool
+	}{
+		{"30 tablets", "Metformin 500 mg tablets, 30 tablets, price $8.00.", true},
+		{"90 tablets", "Metformin 500 mg tablets, 90 tablets, price $8.00.", false},
+		{"", "Metformin 500 mg tablets price $8.00.", false},
+	} {
+		ai := &medicineSearchFixture{
+			research: insurance.SearchEvidence{Text: test.quote, Sources: []string{source}, Excerpts: map[string]string{source: test.quote}},
+			offers:   []MedicineSearchOffer{{Medicine: "Metformin 500 mg tablets", Price: medicineTestPrice(8), Currency: "USD", Quantity: test.quantity, SourceURL: source, Quote: test.quote}},
+		}
+		const requested = "metformin500 mg,30tablets"
+		result := searchMedicines(context.Background(), requested, ai)
+		if result.Medicine != requested || !strings.Contains(ai.query, requested) || len(result.Offers) != 1 || (result.Offers[0].Price != nil) != test.wantPrice {
+			t.Fatalf("package count confused product identity or price: quantity=%q result=%+v", test.quantity, result)
+		}
+		if ai.input["requested_product"] != "metformin500 mg,tablets" || ai.input["requested_quantity"] != "30 tablet" {
+			t.Fatalf("product/quantity extraction was not explicit: %#v", ai.input)
+		}
+	}
+	product, pack, ambiguous := medicineProductAndPack("metformin 500 mg tablets")
+	if product != "metformin 500 mg tablets" || pack != nil || ambiguous {
+		t.Fatal("dose strength was interpreted as a package count")
 	}
 }

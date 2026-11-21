@@ -52,6 +52,23 @@ function parsedSearchResults(document,base){
  }
  return results;
 }
+const searchHosts=new Set(['bing.com','www.bing.com','duckduckgo.com','www.duckduckgo.com','html.duckduckgo.com','lite.duckduckgo.com']);
+async function searchDocument(initialURL,timeoutMs){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ try{
+  let url=initialURL;
+  for(let redirects=0;redirects<=2;redirects++){
+   const response=await fetch(url,{headers:{Accept:'application/rss+xml, application/xml, text/html'},redirect:'manual',signal:controller.signal});
+   if([301,302,303,307,308].includes(response.status)){
+    let next;try{const location=response.headers.get('Location');if(location)next=new URL(location,url);}catch{}
+    const allowed=next&&next.protocol==='https:'&&!next.username&&!next.password&&!next.port&&searchHosts.has(next.hostname);
+    if(!allowed||redirects===2){await response.body?.cancel();throw Object.assign(Error('Search redirect rejected.'),{searchErrorKind:allowed?'redirect_limit':'redirect_blocked',searchStatus:response.status});}
+    await response.body?.cancel();url=next.href;continue;
+   }
+   return {status:response.status,ok:response.ok,document:response.ok?await limitedText(response.body,256*1024):''};
+  }
+ }finally{clearTimeout(timer);}
+}
 async function publicSearch(input,instructions){
  let query=typeof input==='string'?input:Array.isArray(input)?input.flatMap(message=>Array.isArray(message?.content)?message.content.filter(part=>part?.type==='input_text'&&typeof part.text==='string').map(part=>part.text):[]).join(' '):'';
  let relaxed='';
@@ -62,23 +79,28 @@ async function publicSearch(input,instructions){
   relaxed=values(['insurer','plan_id','year'])||query;
  }}catch{}
  query=query.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,400);relaxed=relaxed.replace(/[\u0000-\u001f]/g,' ').trim().slice(0,300)||query;
- if(!query)return [];
+ if(!query)return {results:[],diagnostics:[{engine:'none',http_status:0,result_count:0,error_kind:'invalid_input'}]};
  const sbc=/Summary of Benefits and Coverage/i.test(instructions);
  const exact=sbc?query+' "Summary of Benefits and Coverage" filetype:pdf':query;
  const broad=sbc?relaxed+' SBC benefits coverage PDF':query;
- const attempts=[['https://www.bing.com/search?format=rss&q=',exact],['https://html.duckduckgo.com/html/?q=',broad],['https://lite.duckduckgo.com/lite/?q=',broad]];
- const results=[],seen=new Set(),deadline=Date.now()+16000;
- for(const [base,searchQuery]of attempts){
-  const remaining=deadline-Date.now();if(remaining<=0)break;
+ const attempts=[['bing_rss','https://www.bing.com/search?format=rss&q=',exact],['duckduckgo_html','https://html.duckduckgo.com/html/?q=',broad],['duckduckgo_lite','https://lite.duckduckgo.com/lite/?q=',broad]];
+ const results=[],diagnostics=[],seen=new Set(),deadline=Date.now()+16000;
+ for(const [engine,base,searchQuery]of attempts){
+  const remaining=deadline-Date.now();if(remaining<=0){diagnostics.push({engine,http_status:0,result_count:0,error_kind:'budget_exhausted'});break;}
+  const diagnostic={engine,http_status:0,result_count:0,error_kind:''};diagnostics.push(diagnostic);
   try{
-   const response=await fetch(base+encodeURIComponent(searchQuery),{headers:{Accept:'application/rss+xml, application/xml, text/html'},redirect:'error',signal:AbortSignal.timeout(Math.min(6000,remaining))});
-   if(!response.ok)continue;
-   for(const result of parsedSearchResults(await limitedText(response.body,256*1024),base))if(!seen.has(result.url)){seen.add(result.url);results.push(result);}
+   const response=await searchDocument(base+encodeURIComponent(searchQuery),Math.min(6000,remaining));
+   diagnostic.http_status=response.status;
+   if(!response.ok){diagnostic.error_kind='http_error';continue;}
+   const document=response.document,parsed=parsedSearchResults(document,base);
+   diagnostic.result_count=parsed.length;
+   if(!parsed.length)diagnostic.error_kind=/captcha|anomaly|challenge-form|unusual traffic|verify.{0,30}human|bots use duckduckgo/i.test(document)?'challenge':'no_results';
+   for(const result of parsed)if(!seen.has(result.url)){seen.add(result.url);results.push(result);}
    if(results.length&&(!sbc||results.some(result=>/\.pdf(?:[?#]|$)/i.test(result.url))))break;
-  }catch{}
+  }catch(error){diagnostic.http_status=error.searchStatus||diagnostic.http_status;diagnostic.error_kind=error.searchErrorKind||(error.status===413?'response_too_large':['TimeoutError','AbortError'].includes(error.name)?'timeout':'network_error');diagnostic.error_name=['AbortError','TimeoutError','TypeError','RangeError','ReferenceError','Error'].includes(error.name)?error.name:'OtherError';}
  }
  if(sbc)results.sort((a,b)=>Number(/\.pdf(?:[?#]|$)/i.test(b.url))-Number(/\.pdf(?:[?#]|$)/i.test(a.url)));
- return results.slice(0,8);
+ return {results:results.slice(0,8),diagnostics};
 }
 function pdfPages(text){
  // Form-feed characters identify actual page boundaries. Explicit page labels
@@ -138,7 +160,8 @@ async function aiBridge(request,env){
    messages.push({role:'user',content});
   }else throw aiError(400,'AI input is required.');
   const search=Array.isArray(payload.tools)&&payload.tools.some(tool=>tool?.type==='web_search');
-  const results=search?await publicSearch(payload.input,instructions):[];
+  const searchResult=search?await publicSearch(payload.input,instructions):{results:[],diagnostics:[]};
+  const results=searchResult.results;
   if(search)messages.push({role:'user',content:'UNTRUSTED PUBLIC SEARCH EVIDENCE (titles and excerpts only; not full documents). Only the exact retrieved URLs below may be cited. '+(results.length?JSON.stringify(results):'No search sources were available. State that no supported sources were found. Do not supply candidates, providers, prices, or source URLs from memory.')});
   const options={messages,stream:false,max_tokens:Math.max(1,Math.min(7000,Number.isInteger(payload.max_output_tokens)?payload.max_output_tokens:3000)),temperature:0.1};
   const format=payload.text?.format;if(format?.type==='json_object')options.response_format={type:'json_object'};else if(format?.type==='json_schema'&&format.schema)options.response_format={type:'json_schema',json_schema:format.schema};
@@ -150,7 +173,7 @@ async function aiBridge(request,env){
   if(format){let value;try{value=JSON.parse(text);}catch{throw aiError(502,'Cloudflare AI returned invalid structured output.');}if(!value||typeof value!=='object'||Array.isArray(value))throw aiError(502,'Cloudflare AI returned invalid structured output.');text=JSON.stringify(evidenceOutput(value,evidence));}
   if(search){const allowed=new Set(results.map(row=>row.url));text=text.replace(/https?:\/\/[^\s<>"'\])]+/gi,url=>{const clean=url.replace(/[.,;]+$/,'');return allowed.has(sourceURL(clean))?url:'[unsupported source omitted]';});}
   const annotations=results.map(row=>({type:'url_citation',url:row.url}));
-  return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text,annotations}]}],...(search?{search_results:results}:{})},{headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+  return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text,annotations}]}],...(search?{search_results:results,search_diagnostics:searchResult.diagnostics}:{})},{headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
  }catch(error){if(error.safe)return json(error.status,error.message);const quota=error.status===429||/quota|rate.limit|daily.limit|neurons/i.test(String(error.message||''));return json(quota?429:502,quota?'Cloudflare Workers AI free allowance or rate limit reached. Retry after it resets.':'Cloudflare Workers AI could not complete this request. Please retry shortly.');}
 }
 export default {

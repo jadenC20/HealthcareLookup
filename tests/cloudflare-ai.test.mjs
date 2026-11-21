@@ -64,6 +64,47 @@ test('private search response preserves retrieved snippets independently of mode
  assert.equal(response.status,200);const data=await response.json();
  assert.deepEqual(data.search_results,[{url:'https://pharmacy.example/metformin',title:'Metformin pharmacy offer',excerpt:'Metformin 500 mg, 30 tablets: $12 cash. Eligibility restrictions apply.'}]);
  assert.match(data.output[0].content[0].text,/\$1 at/);assert.ok(!data.search_results[0].excerpt.includes('$1 at'));
+ assert.deepEqual(data.search_diagnostics,[{engine:'bing_rss',http_status:200,result_count:1,error_kind:''}]);
+});
+
+test('private search diagnostics distinguish HTTP failures, challenges and network errors without query leakage',async t=>{
+ const originalFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=originalFetch;});let calls=0;
+ globalThis.fetch=async()=>{calls++;if(calls===1)return new Response('Blocked',{status:403});if(calls===2)return new Response('<form id="challenge-form">Verify you are human</form>',{status:202});throw Error('Failed to fetch PRIVATE_MEDICINE_QUERY');};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'No supported sources.'})}};
+ const response=await worker.fetch(request({input:'PRIVATE_MEDICINE_QUERY',tools:[{type:'web_search'}]}),env);assert.equal(response.status,200);const data=await response.json();
+ assert.deepEqual(data.search_diagnostics,[{engine:'bing_rss',http_status:403,result_count:0,error_kind:'http_error'},{engine:'duckduckgo_html',http_status:202,result_count:0,error_kind:'challenge'},{engine:'duckduckgo_lite',http_status:0,result_count:0,error_kind:'network_error',error_name:'Error'}]);
+ assert.ok(!JSON.stringify(data.search_diagnostics).includes('PRIVATE_MEDICINE_QUERY'));assert.ok(!JSON.stringify(data.search_diagnostics).includes(secret));
+});
+
+test('search works without AbortSignal.timeout, follows a safe 301, and clears its native timer',async t=>{
+ const originalFetch=globalThis.fetch,timeoutDescriptor=Object.getOwnPropertyDescriptor(AbortSignal,'timeout'),originalSetTimeout=globalThis.setTimeout,originalClearTimeout=globalThis.clearTimeout,timers=[],cleared=[];
+ Object.defineProperty(AbortSignal,'timeout',{value:undefined,configurable:true,writable:true});
+ globalThis.setTimeout=(callback,delay,...args)=>{const timer=originalSetTimeout(callback,delay,...args);timers.push({timer,delay});return timer;};globalThis.clearTimeout=timer=>{cleared.push(timer);return originalClearTimeout(timer);};
+ t.after(()=>{globalThis.fetch=originalFetch;if(timeoutDescriptor)Object.defineProperty(AbortSignal,'timeout',timeoutDescriptor);else delete AbortSignal.timeout;globalThis.setTimeout=originalSetTimeout;globalThis.clearTimeout=originalClearTimeout;});
+ const calls=[],document='https://pharmacy.example/metformin';
+ globalThis.fetch=async(url,options)=>{calls.push({url,options});return calls.length===1?new Response(null,{status:301,headers:{Location:'https://bing.com/search?format=rss&q=metformin'}}):new Response('<rss><channel><item><title>Metformin prices</title><link>'+document+'</link><description>Published pharmacy details.</description></item></channel></rss>');};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:document})}};
+ const response=await worker.fetch(request({input:'metformin',tools:[{type:'web_search'}]}),env);assert.equal(response.status,200);const data=await response.json();
+ assert.equal(calls.length,2);assert.ok(calls.every(call=>call.options.redirect==='manual'&&call.options.signal instanceof AbortSignal));assert.equal(calls[1].url,'https://bing.com/search?format=rss&q=metformin');
+ assert.deepEqual(data.search_results,[{url:document,title:'Metformin prices',excerpt:'Published pharmacy details.'}]);assert.equal(timers.length,1);assert.ok(timers[0].delay>0&&timers[0].delay<=6000);assert.ok(cleared.includes(timers[0].timer));
+});
+
+test('search never follows redirects outside the HTTPS search-engine allowlist',async t=>{
+ const originalFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=originalFetch;});let calls=0;
+ const locations=['https://private.example/collect','http://www.bing.com/search','https://secret@duckduckgo.com/'];
+ globalThis.fetch=async()=>new Response(null,{status:302,headers:{Location:locations[calls++]}});
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'No supported sources.'})}};
+ const response=await worker.fetch(request({input:'metformin',tools:[{type:'web_search'}]}),env);const data=await response.json();assert.equal(calls,3);assert.deepEqual(data.search_results,[]);
+ assert.ok(data.search_diagnostics.every(item=>item.http_status===302&&item.error_kind==='redirect_blocked'&&item.error_name==='Error'));
+});
+
+test('search bounds redirect loops and clears timers on fetch failures',async t=>{
+ const originalFetch=globalThis.fetch,originalSetTimeout=globalThis.setTimeout,originalClearTimeout=globalThis.clearTimeout,timers=[],cleared=[];let calls=0;
+ globalThis.setTimeout=(callback,delay,...args)=>{const timer=originalSetTimeout(callback,delay,...args);timers.push(timer);return timer;};globalThis.clearTimeout=timer=>{cleared.push(timer);return originalClearTimeout(timer);};
+ t.after(()=>{globalThis.fetch=originalFetch;globalThis.setTimeout=originalSetTimeout;globalThis.clearTimeout=originalClearTimeout;});
+ globalThis.fetch=async()=>{calls++;return new Response(null,{status:307,headers:{Location:'https://www.bing.com/search?loop='+calls}});};
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async()=>({response:'No supported sources.'})}};
+ const response=await worker.fetch(request({input:'metformin',tools:[{type:'web_search'}]}),env);const data=await response.json();assert.equal(calls,9);assert.ok(data.search_diagnostics.every(item=>item.error_kind==='redirect_limit'));assert.equal(timers.length,3);assert.ok(timers.every(timer=>cleared.includes(timer)));
 });
 
 test('SBC search falls back to DuckDuckGo HTML and decodes the actual PDF URL',async t=>{
