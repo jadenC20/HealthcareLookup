@@ -104,6 +104,17 @@ func fileInput(doc Document) map[string]any {
 }
 func (a *OpenAI) structured(ctx context.Context, instructions string, content []any, name string, schema any, dest any) error {
 	payload := map[string]any{"model": a.Model, "store": false, "max_output_tokens": 7000, "instructions": instructions, "input": []any{map[string]any{"role": "user", "content": content}}, "text": map[string]any{"format": map[string]any{"type": "json_schema", "name": name, "strict": true, "schema": schema}}}
+	if a.Provider == "openrouter" {
+		// Gemma supports JSON mode, but not provider-enforced JSON schemas.
+		// Keep the same contract in the prompt and validate it locally below.
+		rawSchema, err := json.Marshal(schema)
+		if err != nil {
+			return err
+		}
+		payload["instructions"] = instructions + "\nReturn only one JSON object matching this JSON schema exactly. Include every required field, use null only where permitted, and do not add fields or Markdown:\n" + string(rawSchema)
+		payload["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
+		payload["reasoning"] = map[string]any{"enabled": false}
+	}
 	response, err := a.call(ctx, payload)
 	if err != nil {
 		return err
@@ -111,6 +122,9 @@ func (a *OpenAI) structured(ctx context.Context, instructions string, content []
 	text, _, err := responseText(response)
 	if err != nil {
 		return err
+	}
+	if a.Provider == "openrouter" && !validateJSONSchema([]byte(text), schema) {
+		return stageError("invalid_ai_output", "The AI provider returned output that did not match the expected structure.")
 	}
 	dec := json.NewDecoder(strings.NewReader(text))
 	dec.DisallowUnknownFields()
@@ -132,24 +146,7 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 			return nil, stageError("ai_key_incomplete", "The backend OpenRouter key is incomplete or invalid.")
 		}
 		if p, ok := payload.(map[string]any); ok {
-			// Keep the selected model; never silently route to a paid fallback.
-			p["provider"] = map[string]any{"require_parameters": true, "data_collection": "deny", "max_price": map[string]any{"prompt": 0, "completion": 0}}
-			if tools, ok := p["tools"].([]any); ok && len(tools) > 0 {
-				return nil, stageError("web_search_not_enabled", "Live web research is not enabled for this free OpenRouter configuration. Upload the SBC directly or continue with limited insurance context.")
-			}
-			// Explicitly select free PDF processing instead of paid default OCR.
-			if input, ok := p["input"].([]any); ok {
-				for _, message := range input {
-					m, _ := message.(map[string]any)
-					content, _ := m["content"].([]any)
-					for _, part := range content {
-						c, _ := part.(map[string]any)
-						if c["type"] == "input_file" {
-							p["plugins"] = []any{map[string]any{"id": "file-parser", "pdf": map[string]any{"engine": "cloudflare-ai"}}}
-						}
-					}
-				}
-			}
+			configureOpenRouterPayload(p)
 		}
 	}
 	if a.Key == "" {
@@ -180,8 +177,17 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	if resp.StatusCode != 200 {
 		if a.Provider == "openrouter" {
 			message := "OpenRouter could not complete the request. Check the key, free-model quota, availability and privacy-compatible provider access."
+			if resp.StatusCode == 401 {
+				message = "OpenRouter rejected the backend credential. Set OPENROUTER_API_KEY on the Render backend and redeploy."
+			}
+			if resp.StatusCode == 402 {
+				message = "OpenRouter requires available credits for web search, including when the selected model is free."
+			}
+			if resp.StatusCode == 404 {
+				message = "No OpenRouter endpoint supports the configured model, request parameters and privacy settings."
+			}
 			if resp.StatusCode == 429 {
-				message = "OpenRouter's free-model rate limit was reached. Please retry later."
+				message = "OpenRouter or the model provider is limiting requests. Shared free-model capacity can be exhausted even when this key has no recorded usage. Please retry later."
 			}
 			return nil, stageError(fmt.Sprintf("openrouter_http_%d", resp.StatusCode), message)
 		}
@@ -192,7 +198,7 @@ func (a *OpenAI) call(ctx context.Context, payload any) (map[string]any, error) 
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return nil, stageError("openai_unavailable", "The OpenAI response could not be read.")
+		return nil, stageError("ai_unavailable", "The AI provider response could not be read.")
 	}
 	var out map[string]any
 	if json.Unmarshal(data, &out) != nil {
