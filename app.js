@@ -6,8 +6,9 @@ let activePage='',viewVersion=0,toastTimer,profileName='Eleanor Vance';
 const escaped=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon=name=>`<span class="material-symbols-outlined" aria-hidden="true">${name}</span>`;
 function notify(message){const toast=document.querySelector('#toast');toast.textContent=message;toast.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.style.display='none',4500)}
-function openDialog(title,content){document.querySelector('#dialog-title').textContent=title;document.querySelector('#dialog-content').innerHTML=content;dialog.showModal()}
+function openDialog(title,content){dialog.classList.remove('auth-dialog');document.querySelector('#dialog-title').textContent=title;document.querySelector('#dialog-content').innerHTML=content;if(!dialog.open)dialog.showModal()}
 document.querySelector('#close-dialog').onclick=()=>dialog.close();
+dialog.addEventListener('close',()=>dialog.classList.remove('auth-dialog'));
 dialog.addEventListener('click',event=>{if(event.target===dialog){const box=dialog.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)dialog.close()}});
 function route(name){if(activePage===name){main.focus({preventScroll:true});return}location.hash=name}
 async function render(){

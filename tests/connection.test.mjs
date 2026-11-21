@@ -21,6 +21,7 @@ test('proxy preserves Go cookies, CSRF, query strings, multipart bytes, PDF and 
  for(const asset of ['app.js','connected.mjs','insurance-view.mjs','api-client.mjs','supabase-auth.mjs','assets/vendor/supabase.js']){const response=await fetch(origin+'/'+asset);assert.equal(response.status,200,`${asset} must be served for the connected UI to load`);assert.match(response.headers.get('content-type'),/javascript/);}
  const authConfig=await fetch(origin+'/auth/config');assert.deepEqual(await authConfig.json(),publicAuth);
  const page=await fetch(origin+'/');assert.ok(page.headers.get('content-security-policy').includes("connect-src 'self' https://synthetic.supabase.co;"));
+ const html=await page.text();assert.doesNotMatch(html,/data-page="account"/,'account access must not appear in primary navigation');assert.match(html,/data-account-label>Sign in</,'sign-in remains available as a utility action');
  const login=await fetch(origin+'/api/auth/login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:'{"email":"synthetic@example.test","password":"test-password"}'});
  assert.match(login.headers.get('set-cookie'),/HttpOnly/);assert.equal((await login.json()).csrf,'synthetic-csrf');assert.equal(seen[0].headers.origin,apiOrigin);
  const body=new FormData();body.append('file',new Blob(['%PDF-synthetic'],{type:'application/pdf'}),'synthetic.pdf');body.append('revision','revision-1');
