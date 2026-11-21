@@ -52,6 +52,12 @@ func New(store SQLStore) (*Service, error) {
 		store.Close()
 		return nil, err
 	}
+	documents, err := newPrivateDocuments()
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	s.documents = documents
 	return s, nil
 }
 
@@ -66,4 +72,5 @@ type Service struct {
 	jobWG      sync.WaitGroup
 	supabase   *supabaseVerifier
 	healthAI   healthcareAI
+	documents  *privateDocuments
 }

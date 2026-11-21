@@ -5,6 +5,7 @@ import (
 	"clearcare/billreview"
 	"clearcare/caresearch"
 	"clearcare/prescription"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -26,7 +27,12 @@ func main() {
 		dataDir = filepath.Join(dataDir, "demo")
 	}
 	care := caresearch.Load(dataDir)
-	accounts, err := account.OpenLocalSQLite(runtime.StoreDSN)
+	var accounts *account.Service
+	if runtime.StoreMode == "postgres" {
+		accounts, err = account.OpenPostgres(runtime.StoreDSN)
+	} else {
+		accounts, err = account.OpenLocalSQLite(runtime.StoreDSN)
+	}
 	if err != nil {
 		log.Fatalf("open account database: %v", err)
 	}
@@ -91,6 +97,12 @@ func main() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if secret := os.Getenv("CLEARCARE_PROXY_SECRET"); secret != "" && r.URL.Path != "/health" {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-ClearCare-Proxy-Secret")), []byte(secret)) != 1 {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
 		if origin := r.Header.Get("Origin"); !runtime.originAllowed(origin) {
 			http.Error(w, "Origin not allowed", http.StatusForbidden)
 			return

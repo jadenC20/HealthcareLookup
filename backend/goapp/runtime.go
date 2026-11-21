@@ -55,8 +55,13 @@ func loadRuntimeConfig() (runtimeConfig, error) {
 		}
 	case "memory":
 		dsn = "file:clearcare-memory?mode=memory&cache=shared"
+	case "postgres":
+		dsn = strings.TrimSpace(os.Getenv("DATABASE_URL"))
+		if dsn == "" {
+			return runtimeConfig{}, fmt.Errorf("DATABASE_URL is required for postgres storage")
+		}
 	default:
-		return runtimeConfig{}, fmt.Errorf("CLEARCARE_STORE %q is not implemented; use local-sqlite or memory while the Supabase adapter is developed", mode)
+		return runtimeConfig{}, fmt.Errorf("CLEARCARE_STORE must be local-sqlite, memory or postgres")
 	}
 	origins := map[string]bool{}
 	rawOrigins := strings.TrimSpace(os.Getenv("CLEARCARE_ALLOWED_ORIGINS"))

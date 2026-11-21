@@ -1,5 +1,7 @@
 # ClearCare architecture
 
+Deployment preparation is now underway; see [hosting status and setup](docs/HOSTING.md). Supabase Auth is implemented and remains authoritative for hosted login. Postgres, private Supabase Storage, and Cloudflare Pages/Render configuration are implemented. Hosted mode saves private object references in the database; local SQLite retains document bytes. The original hosted-target narrative below describes the earlier planning baseline where it differs from this status.
+
 One Go process implements three product services: Bill Review, Care Search and Prescription Comparison. Accounts, insurance import and evidence handling are shared support. The frontend is unchanged by this implementation.
 
 ## Technology stack

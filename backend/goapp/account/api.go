@@ -258,6 +258,10 @@ func (s *Service) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := s.deletePrivateDocuments(r.Context(), u.ID, ""); err != nil {
+		fail(w, 503, "Unable to delete private files. Please retry.")
+		return
+	}
 	tx, e := s.db.Begin()
 	if e != nil {
 		fail(w, 500, "Unable to delete account.")
@@ -543,6 +547,11 @@ func (s *Service) UploadCard(w http.ResponseWriter, r *http.Request) {
 	initial.Status = "processing"
 	initial.Finish()
 	payload, _ := json.Marshal(initial)
+	stored, err := s.storeDocument(r.Context(), u.ID, "card", kind, data)
+	if err != nil {
+		fail(w, 503, "Unable to save private card file.")
+		return
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		fail(w, 500, "Unable to save the card.")
@@ -554,7 +563,7 @@ func (s *Service) UploadCard(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "The account changed during upload. Sign in again.")
 		return
 	}
-	_, err = tx.Exec(`INSERT INTO insurance_cards(user_id,content_type,data,updated) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET content_type=excluded.content_type,data=excluded.data,updated=excluded.updated`, u.ID, kind, data, updated)
+	_, err = tx.Exec(`INSERT INTO insurance_cards(user_id,content_type,data,updated) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET content_type=excluded.content_type,data=excluded.data,updated=excluded.updated`, u.ID, kind, stored, updated)
 	if err == nil {
 		_, err = tx.Exec(`INSERT INTO insurance_workflows(user_id,revision,result,document) VALUES(?,?,?,NULL) ON CONFLICT(user_id) DO UPDATE SET revision=excluded.revision,result=excluded.result,document=NULL`, u.ID, revision, string(payload))
 	}
@@ -602,6 +611,10 @@ func (s *Service) DeleteCard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := s.deletePrivateDocuments(r.Context(), u.ID, ""); err != nil {
+		fail(w, 503, "Unable to delete private files. Please retry.")
+		return
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		fail(w, 500, "Unable to delete the card.")
@@ -630,6 +643,9 @@ func (s *Service) CardFile(w http.ResponseWriter, r *http.Request) {
 	var data []byte
 	var kind string
 	err := s.db.QueryRow(`SELECT content_type,data FROM insurance_cards WHERE user_id=?`, u.ID).Scan(&kind, &data)
+	if err == nil {
+		data, err = s.readDocument(r.Context(), u.ID, data)
+	}
 	if err == sql.ErrNoRows {
 		fail(w, 404, "Card not found.")
 		return

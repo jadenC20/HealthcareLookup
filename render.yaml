@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: clearcare-api
+    runtime: go
+    plan: free
+    rootDir: backend/goapp
+    buildCommand: go build -o bin/clearcare .
+    startCommand: ./bin/clearcare
+    healthCheckPath: /health
+    envVars:
+      - key: CLEARCARE_HOST
+        value: 0.0.0.0
+      - key: CLEARCARE_STORE
+        value: postgres
+      - key: CLEARCARE_SECURE_COOKIES
+        value: "1"
+      - key: CLEARCARE_DOCUMENT_STORE
+        value: supabase
+      - key: SUPABASE_STORAGE_BUCKET
+        value: clearcare-private
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CLEARCARE_ALLOWED_ORIGINS
+        sync: false
+      - key: CLEARCARE_PROXY_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

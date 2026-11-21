@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:pages": "node scripts/build-pages.mjs",
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "build": "tailwindcss -c tailwind.config.cjs -i styles/input.css -o styles.css --minify",

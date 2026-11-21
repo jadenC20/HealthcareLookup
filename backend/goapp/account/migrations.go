@@ -13,6 +13,7 @@ type migration struct {
 }
 
 var migrations = []migration{
+	{0, `CREATE TABLE IF NOT EXISTS private_documents(object_key TEXT PRIMARY KEY,user_id TEXT NOT NULL,kind TEXT NOT NULL,created TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_private_documents_user ON private_documents(user_id);`},
 	{1, `CREATE TABLE IF NOT EXISTS patient_preferences(user_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feature_runs(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,feature TEXT NOT NULL,created TEXT NOT NULL,result TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS charge_observations(id TEXT PRIMARY KEY,facility_id TEXT NOT NULL,code TEXT NOT NULL,charge REAL NOT NULL,benchmark REAL NOT NULL,difference REAL NOT NULL,price_type TEXT NOT NULL,source_url TEXT NOT NULL);

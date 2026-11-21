@@ -109,6 +109,11 @@ func (s *Service) runInsurance(w http.ResponseWriter, r *http.Request, uid, revi
 	if result.Document != nil {
 		document = result.Document.Data
 	}
+	document, err = s.storeDocument(ctx, uid, "sbc", "application/pdf", document)
+	if err != nil {
+		fail(w, 503, "Unable to save private benefits document.")
+		return
+	}
 	res, err := s.db.Exec(`UPDATE insurance_workflows SET result=?,document=? WHERE user_id=? AND revision=? AND EXISTS(SELECT 1 FROM users WHERE id=?)`, string(payload), document, uid, revision, uid)
 	if err != nil {
 		fail(w, 500, "Unable to save insurance results.")
@@ -159,6 +164,12 @@ func (s *Service) ConfirmInsurance(w http.ResponseWriter, r *http.Request) {
 	if previous.Revision == body.Revision && previous.Result.Document != nil {
 		doc := *previous.Result.Document
 		if err := s.db.QueryRow(`SELECT document FROM insurance_workflows WHERE user_id=? AND revision=?`, u.ID, body.Revision).Scan(&doc.Data); err == nil && len(doc.Data) > 0 {
+			var readErr error
+			doc.Data, readErr = s.readDocument(r.Context(), u.ID, doc.Data)
+			if readErr != nil {
+				fail(w, 503, "Unable to read saved SBC.")
+				return
+			}
 			saved = &doc
 		}
 	}
@@ -197,6 +208,9 @@ func (s *Service) RetryInsurance(w http.ResponseWriter, r *http.Request) {
 	if state.Result.Document != nil {
 		doc := *state.Result.Document
 		err = s.db.QueryRow(`SELECT document FROM insurance_workflows WHERE user_id=? AND revision=?`, u.ID, state.Revision).Scan(&doc.Data)
+		if err == nil {
+			doc.Data, err = s.readDocument(r.Context(), u.ID, doc.Data)
+		}
 		if err != nil || len(doc.Data) == 0 {
 			fail(w, 409, "The saved SBC changed. Reload insurance information.")
 			return
@@ -205,6 +219,9 @@ func (s *Service) RetryInsurance(w http.ResponseWriter, r *http.Request) {
 	}
 	if saved == nil && !state.Result.DetailsConfirmed {
 		err = s.db.QueryRow(`SELECT data,content_type FROM insurance_cards WHERE user_id=?`, u.ID).Scan(&card.Data, &card.MIME)
+		if err == nil {
+			card.Data, err = s.readDocument(r.Context(), u.ID, card.Data)
+		}
 		if err != nil {
 			fail(w, 422, "Upload a card or confirm plan details before retrying.")
 			return
@@ -337,6 +354,9 @@ func (s *Service) SBCFile(w http.ResponseWriter, r *http.Request) {
 	}
 	var data []byte
 	err := s.db.QueryRow(`SELECT document FROM insurance_workflows WHERE user_id=?`, u.ID).Scan(&data)
+	if err == nil {
+		data, err = s.readDocument(r.Context(), u.ID, data)
+	}
 	if err == sql.ErrNoRows || err == nil && len(data) == 0 {
 		fail(w, 404, "No SBC document is saved.")
 		return
@@ -352,6 +372,10 @@ func (s *Service) SBCFile(w http.ResponseWriter, r *http.Request) {
 func (s *Service) DeleteInsurance(w http.ResponseWriter, r *http.Request) {
 	u, ok := s.identity(w, r, true)
 	if !ok {
+		return
+	}
+	if err := s.deletePrivateDocuments(r.Context(), u.ID, "sbc"); err != nil {
+		fail(w, 503, "Unable to delete private SBC files. Please retry.")
 		return
 	}
 	if _, err := s.db.Exec(`DELETE FROM insurance_workflows WHERE user_id=?`, u.ID); err != nil {
