@@ -49,8 +49,12 @@ func cloudflareFixtureAI(t *testing.T, reply map[string]any, inspect func(map[st
 func TestCloudflareBridgeDocumentAndSchema(t *testing.T) {
 	ai := cloudflareFixtureAI(t, fixtureResponse(t, Extraction{Details: testDetails(), Unreadable: []string{}}), func(payload map[string]any) {
 		format := payload["text"].(map[string]any)["format"].(map[string]any)
-		if format["type"] != "json_object" || !strings.Contains(payload["instructions"].(string), `"required"`) {
-			t.Error("JSON mode or schema instructions missing")
+		if format["type"] != "json_schema" || format["strict"] != true || format["name"] != "insurance_card" || !strings.Contains(payload["instructions"].(string), `"required"`) {
+			t.Error("constrained generation schema or schema instructions missing")
+		}
+		schema, ok := format["schema"].(map[string]any)
+		if !ok || schema["additionalProperties"] != false || len(schema["required"].([]any)) != 2 {
+			t.Error("required fields or unknown-field restriction were not sent to Cloudflare")
 		}
 		input := payload["input"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)
 		if input["type"] != "input_file" || !strings.HasPrefix(input["file_data"].(string), "data:application/pdf;base64,") {

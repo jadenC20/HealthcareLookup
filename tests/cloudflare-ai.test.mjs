@@ -33,6 +33,15 @@ test('PDF conversion preserves page evidence and withholds invented citations',a
  assert.equal(data.benefits.length,1);assert.equal(data.benefits[0].page,2);assert.ok(data.missing_fields.includes('hospital_stay'));
 });
 
+test('structured extraction sends required fields to Cloudflare constrained generation',async()=>{
+ const schema={type:'object',properties:{details:{type:'object',properties:{insurer:{type:'string'},year:{type:'integer'}},required:['insurer','year'],additionalProperties:false},unreadable_fields:{type:'array',items:{type:'string'}}},required:['details','unreadable_fields'],additionalProperties:false};
+ let received;
+ const env={CLEARCARE_PROXY_SECRET:secret,AI:{run:async(_,options)=>{received=options.response_format;return {response:{details:{insurer:'Example',year:2026},unreadable_fields:[]}};}}};
+ const part=await output(await worker.fetch(request({...payload,text:{format:{type:'json_schema',name:'insurance_card',strict:true,schema}}}),env));
+ assert.deepEqual(received,{type:'json_schema',json_schema:schema});
+ assert.deepEqual(JSON.parse(part.text),{details:{insurer:'Example',year:2026},unreadable_fields:[]});
+});
+
 test('PDF conversion without locations does not create page 1 citations',async()=>{
  const env={CLEARCARE_PROXY_SECRET:secret,AI:{toMarkdown:async()=>({format:'markdown',data:'Deductible: $500 individual.'}),run:async()=>({response:{benefits:[{name:'deductible',value:'$500 individual',page:1,quote:'Deductible: $500 individual.'}],missing_fields:[]}})}};
  const part=await output(await worker.fetch(request({...payload,input:[{role:'user',content:[{type:'input_file',file_data:'data:application/pdf;base64,'+btoa('%PDF-synthetic')}]}]}),env));

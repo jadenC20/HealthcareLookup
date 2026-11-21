@@ -118,14 +118,16 @@ func fileInput(doc Document) map[string]any {
 func (a *OpenAI) structured(ctx context.Context, instructions string, content []any, name string, schema any, dest any) error {
 	payload := map[string]any{"model": a.Model, "store": false, "max_output_tokens": 7000, "instructions": instructions, "input": []any{map[string]any{"role": "user", "content": content}}, "text": map[string]any{"format": map[string]any{"type": "json_schema", "name": name, "strict": true, "schema": schema}}}
 	if a.Provider == "openrouter" || a.Provider == "cloudflare" {
-		// Use JSON mode across compatible endpoints. Keep the same schema
-		// contract in the prompt and enforce it locally below.
+		// Repeat the output contract in the prompt and enforce it locally.
+		// Cloudflare also receives the schema for constrained generation.
 		rawSchema, err := json.Marshal(schema)
 		if err != nil {
 			return err
 		}
 		payload["instructions"] = instructions + "\nReturn only one JSON object matching this JSON schema exactly. Include every required field, use null only where permitted, and do not add fields or Markdown:\n" + string(rawSchema)
-		payload["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
+		if a.Provider == "openrouter" {
+			payload["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
+		}
 	}
 	response, err := a.call(ctx, payload)
 	if err != nil {
