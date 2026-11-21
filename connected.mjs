@@ -57,6 +57,39 @@ async function syncWorkspace(){
  catch(error){if(version!==workspaceRevision||owner!==cloudUser?.id)return;user=null;workspaceError=error.status===404?'Start the updated healthcare backend from this checkout using npm run backend. The server currently running does not support your unified account.':error.message;}
  refreshIdentity();updateConnection();if(activePage==='account')renderAccount();if(activePage==='overview')renderOverview();
 }
+const mcpEndpoint='https://clearcare-mcp.agrigine-mcp.workers.dev/mcp';
+const mcpClients=[
+ {id:'claude-code',name:'Claude Code',doc:'https://docs.claude.com/en/docs/claude-code/mcp',steps:'Run this in your terminal, then start <code>claude</code> and type <code>/mcp</code> to check it is connected.',config:t=>`claude mcp add --transport http clearcare ${mcpEndpoint} --header "Authorization: Bearer ${t}"`},
+ {id:'claude-desktop',name:'Claude Desktop',doc:'https://modelcontextprotocol.io/quickstart/user',steps:'Open Claude Desktop → Settings → Developer → Edit Config, paste this into <code>claude_desktop_config.json</code>, save, and restart Claude Desktop. Requires Node.js.',config:t=>JSON.stringify({mcpServers:{clearcare:{command:'npx',args:['-y','mcp-remote',mcpEndpoint,'--header',`Authorization:Bearer ${t}`]}}},null,2)},
+ {id:'cursor',name:'Cursor',doc:'https://docs.cursor.com/context/model-context-protocol',steps:'Open Cursor Settings → MCP → Add new MCP server, or paste this into <code>~/.cursor/mcp.json</code>.',config:t=>JSON.stringify({mcpServers:{clearcare:{url:mcpEndpoint,headers:{Authorization:`Bearer ${t}`}}}},null,2)},
+ {id:'vscode',name:'VS Code',doc:'https://code.visualstudio.com/docs/copilot/chat/mcp-servers',steps:'Paste this into <code>.vscode/mcp.json</code> in your workspace (or run “MCP: Add Server”), then open Copilot Chat in Agent mode.',config:t=>JSON.stringify({servers:{clearcare:{type:'http',url:mcpEndpoint,headers:{Authorization:`Bearer ${t}`}}}},null,2)},
+ {id:'other',name:'Other clients',doc:'https://modelcontextprotocol.io/docs/concepts/transports',steps:'Any MCP client that supports Streamable HTTP with custom headers can connect. Use these settings:',config:t=>`URL:     ${mcpEndpoint}\nHeader:  Authorization: Bearer ${t}\nTransport: Streamable HTTP`},
+];
+function mcpConnectionPanel(){
+ const shell=document.querySelector('.live-shell');if(!shell||document.querySelector('#mcp-connect'))return;
+ const panel=document.createElement('section');panel.className='live-panel mcp-connect';panel.id='mcp-connect';
+ const placeholder='YOUR_ACCESS_TOKEN';
+ panel.innerHTML=`<div class="live-label">AI assistant connection</div><h2>Connect ClearCare to your AI assistant (MCP)</h2><p>ClearCare has a <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">Model Context Protocol</a> server. Once connected, an assistant such as Claude can review bills, check your insurance, find care and compare medicine prices using your ClearCare account.</p>
+<div class="mcp-endpoint"><span>Server URL</span><code>${e(mcpEndpoint)}</code><button type="button" class="secondary-action" data-copy-endpoint>Copy URL</button></div>
+<ol class="mcp-steps"><li>Choose your assistant below.</li><li>Press <strong>Copy setup with my token</strong>. The copied setup includes your personal access token; the setup shown on this page uses a placeholder.</li><li>Paste it where the instructions say, then restart or reload the assistant.</li></ol>
+<div class="mcp-tabs" role="tablist">${mcpClients.map((c,i)=>`<button type="button" role="tab" aria-selected="${i===0}" data-mcp-tab="${c.id}">${e(c.name)}</button>`).join('')}</div>
+<div id="mcp-client"></div>
+<div class="live-note"><strong>Keep your token private.</strong> It gives access to your health information, so don't share it or put it in public files. For your security it expires after about an hour; when the assistant says sign-in is required, copy the setup again. Signing out of ClearCare also ends it.</div>
+<p class="live-note">Claude.ai and the Claude mobile app connectors need a browser sign-in (OAuth), which ClearCare does not support yet. Use Claude Code, Claude Desktop, Cursor or VS Code for now.</p>
+<details><summary>What can the assistant do?</summary><ul class="mcp-capabilities"><li>Find medicine prices, nearby pharmacies and delivery options</li><li>Extract and review medical bills, save reviews and download PDFs</li><li>Read and update your insurance plan and benefits summary</li><li>Search for providers and get care recommendations</li><li>Read and update your profile and preferences</li><li>See and cancel background jobs and saved results</li></ul><p>Deleting your account through an assistant requires typing an exact confirmation phrase. <a href="https://github.com/jadenC20/HealthcareLookup/blob/main/docs/MCP.md" target="_blank" rel="noopener noreferrer">Full MCP documentation</a></p></details>
+<p id="mcp-status" class="live-status" role="status"></p>`;
+ const ref=shell.querySelector('#unified-account');ref?ref.after(panel):shell.append(panel);
+ const status=panel.querySelector('#mcp-status'),target=panel.querySelector('#mcp-client');
+ const copy=async(text,message)=>{try{await navigator.clipboard.writeText(text);statusText(status,message);}catch{statusText(status,'Copy failed. Select the text and copy it manually.');}};
+ const show=id=>{const c=mcpClients.find(x=>x.id===id)||mcpClients[0];panel.querySelectorAll('[data-mcp-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.mcpTab===c.id)));
+  target.innerHTML=`<p>${c.steps}</p><pre class="mcp-config">${e(c.config(placeholder))}</pre><div class="live-actions"><button type="button" class="primary-action" data-copy-config>Copy setup with my token</button><button type="button" class="secondary-action" data-copy-plain>Copy without token</button><a href="${e(c.doc)}" target="_blank" rel="noopener noreferrer">${e(c.name)} MCP guide ↗</a></div>`;
+  target.querySelector('[data-copy-plain]').onclick=()=>copy(c.config(placeholder),'Copied. Replace YOUR_ACCESS_TOKEN with your token before using it.');
+  target.querySelector('[data-copy-config]').onclick=async()=>{let token=null;try{token=await cloudAuth.getAccessToken();}catch{}if(!token){statusText(status,'Sign in again to copy your access token.');return;}await copy(c.config(token),'Copied '+c.name+' setup with your token. It expires in about an hour.');};
+ };
+ panel.querySelectorAll('[data-mcp-tab]').forEach(b=>b.onclick=()=>show(b.dataset.mcpTab));
+ panel.querySelector('[data-copy-endpoint]').onclick=()=>copy(mcpEndpoint,'Server URL copied.');
+ show(mcpClients[0].id);
+}
 function renderAccount(){
  if(!cloudUser&&!user){auth();if(location.hash==='#account')location.hash='overview';return;}
  const name=user?.name||cloudUser?.user_metadata?.display_name||'';
@@ -68,6 +101,7 @@ function renderAccount(){
  document.querySelector('#export-account')?.addEventListener('click',()=>attempt(()=>download('/account/pdf'),status));
  document.querySelector('#unified-signout')?.addEventListener('click',()=>attempt(async()=>{await cloudAuth.signOut();api.clearSession();handleCloudIdentity(null);},status));
  document.querySelector('#delete-account')?.addEventListener('click',()=>{if(confirm('Permanently delete this healthcare profile, its stored insurance documents, and saved reviews? Your Supabase sign-in account will remain.'))attempt(async()=>{await api.request('/account',{method:'DELETE'});user=null;review=null;analysis=null;insuranceState=null;refreshIdentity();await syncWorkspace();notify('Healthcare data deleted. Your account now has an empty profile.');},status);});
+ if(cloudUser)mcpConnectionPanel();
  if(user){loadInsurance();loadSaved();const settings=document.createElement('details');settings.className='live-panel';settings.innerHTML='<summary>Care search preferences & price tools</summary>';document.querySelector('.live-shell').append(settings);careProfileSettings(settings);}
 }
 
