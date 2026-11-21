@@ -6,7 +6,7 @@ import {validateUpload,priceView} from '../api-client.mjs';
 import {insuranceView,careAdviceHTML} from '../insurance-view.mjs';
 
 const source=(await readFile(new URL('../connected.mjs',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace(/\ninitialize\(\);\s*$/,'');
-function node(){return {isConnected:true,innerHTML:'',textContent:'',disabled:false,childNodes:[],dataset:{},classList:{add(){},remove(){},toggle(){}},append(){},prepend(){},before(){},remove(){},setAttribute(){},removeAttribute(){},insertAdjacentHTML(){},addEventListener(){},querySelectorAll(){return [];},querySelector(){return null;}};}
+function node(){const listeners={};return {isConnected:true,innerHTML:'',textContent:'',disabled:false,childNodes:[],dataset:{},listeners,classList:{add(){},remove(){},toggle(){}},append(){},prepend(){},before(){},after(){},remove(){},setAttribute(){},removeAttribute(){},insertAdjacentHTML(){},addEventListener(type,fn){listeners[type]=fn;},querySelectorAll(){return [];},querySelector(){return null;}};}
 function harness(request=async()=>({}),elements=new Map()){
  const timers=[],dialog={...node(),open:false,close(){this.open=false;this.closed=true;}},main=node();
  const context=vm.createContext({console,URL,URLSearchParams,FormData,validateUpload,priceView,insuranceView,careAdviceHTML,Promise,Date,Number,Map,Set,Object,String,JSON,Error,document:{querySelector:selector=>elements.get(selector)||null,querySelectorAll:()=>[],createElement:()=>node()},window:{addEventListener(){}},dialog,main,activePage:'',escaped:String,notify(){},route(){},render(){},titles:{},showProfile(){},showBenefits(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},createSupabaseAuth:()=>({config:{configured:true},getAccessToken:async()=>null}),createApi:()=>({request,clearSession(){context.sessionCleared=true;},setSession(){}})});
@@ -97,5 +97,40 @@ test('procedure-code fields and sample codes are absent from the entire web inte
  for(const path of ['app.js','connected.mjs','integration.js','pages/overview.html','pages/care.html','pages/bill.html','pages/prescriptions.html']){
   const text=await readFile(new URL('../'+path,import.meta.url),'utf8');
   assert.doesNotMatch(text,/procedure[_ -]?code|\bCPT\b|\bHCPCS\b|Billing code|data-key="code"|name="code"|\$\{[^}]*field\('code'/i,path);
+ }
+});
+
+function careHarness(data,{consent=true}={}){
+ const paths=[],host=node(),form={...node(),values:{q:'MRI knee',city:'Philadelphia',state:'pa',type:'all',...(consent?{ai_consent:'true'}:{})}},nodes=new Map([['form',form],['#care-engine-form',form]]),created=[];
+ host.querySelector=selector=>{if(!nodes.has(selector))nodes.set(selector,{...node(),value:'',checked:false});return nodes.get(selector);};form.querySelector=()=>node();
+ const h=harness(async path=>{paths.push(path);return path.startsWith('/care/search?')?data:{};},new Map([['#live-page-content',node()]]));
+ h.context.document.createElement=tag=>{if(tag==='section')return host;const element=node();created.push(element);return element;};h.context.FormData=class{constructor(form){return Object.entries(form.values)[Symbol.iterator]();}};
+ h.run('careSearch()');
+ return {...h,paths,host,form,nodes,created,submit:()=>form.onsubmit({preventDefault(){},target:form})};
+}
+const rankedCare={results:[{name:'Alpha clinic',specialty:'Imaging',ai_rank:2,ai_reason:'Second fit for your search.'},{name:'Zulu imaging',specialty:'Radiology',ai_rank:1,ai_reason:'Relevant imaging services.'},{name:'Aardvark clinic',specialty:'Imaging'}],ai:{status:'completed',result:{summary:'Compare service availability.',recommendations:[{listing_index:1,explanation:'Explains Zulu imaging.'}],limitations:[]}}};
+
+test('consented care search preserves AI recommendation order, explanations, and source indices',async()=>{
+ const h=careHarness(rankedCare);await h.submit();
+ const query=new URL(h.paths.find(path=>path.startsWith('/care/search?')),'https://example.test');assert.equal(query.searchParams.get('ai_consent'),'true');assert.equal(query.searchParams.get('q'),'MRI knee');assert.equal(query.searchParams.get('state'),'PA');
+ const grid=h.nodes.get('#care-result-grid').innerHTML;assert.ok(grid.indexOf('Zulu imaging')<grid.indexOf('Alpha clinic'));assert.ok(grid.indexOf('Alpha clinic')<grid.indexOf('Aardvark clinic'));assert.match(grid,/AI recommendation #1/);assert.match(grid,/Relevant imaging services\./);assert.match(h.nodes.get('#care-ai-status').textContent,/AI ranked 2 of 3 results/);
+ const guidance=h.created.find(element=>element.id==='care-plan-guidance').innerHTML;assert.match(guidance,/Zulu imaging/);assert.match(guidance,/Explains Zulu imaging\./);assert.doesNotMatch(guidance,/Alpha clinic/);assert.equal(rankedCare.results[0].name,'Alpha clinic');
+ const consent=h.created.find(element=>element.className==='care-ai-consent').innerHTML;assert.match(consent,/Use AI to rank these results/);assert.doesNotMatch(consent,/\bchecked\b/);
+});
+
+test('care manual sorting and filters work, and clearing filters restores AI sort',async()=>{
+ const h=careHarness(rankedCare);await h.submit();const sort=h.nodes.get('#care-sort'),refine=h.nodes.get('#care-refine'),grid=h.nodes.get('#care-result-grid');
+ sort.value='name';sort.listeners.input();assert.ok(grid.innerHTML.indexOf('Aardvark clinic')<grid.innerHTML.indexOf('Zulu imaging'));
+ sort.value='specialty';sort.listeners.input();assert.ok(grid.innerHTML.indexOf('Alpha clinic')<grid.innerHTML.indexOf('Zulu imaging'));
+ refine.value='Alpha';refine.listeners.input();assert.match(grid.innerHTML,/Alpha clinic/);assert.doesNotMatch(grid.innerHTML,/Zulu imaging/);
+ h.nodes.get('#care-clear').onclick();assert.equal(sort.value,'ai');assert.equal(refine.value,'');assert.ok(grid.innerHTML.indexOf('Zulu imaging')<grid.innerHTML.indexOf('Alpha clinic'));
+});
+
+test('unavailable and unrequested care ranking use honest alphabetical fallback',async()=>{
+ for(const consent of [true,false]){
+  const h=careHarness({...rankedCare,ai:{status:'unavailable',detail:'AI service temporarily unavailable.'}},{consent});await h.submit();const grid=h.nodes.get('#care-result-grid').innerHTML,status=h.nodes.get('#care-ai-status').textContent;
+  assert.ok(grid.indexOf('Aardvark clinic')<grid.indexOf('Zulu imaging'));assert.doesNotMatch(grid,/AI recommendation #|Relevant imaging services\./);
+  assert.match(status,consent?/AI ranking unavailable\. AI service temporarily unavailable\./:/AI ranking not requested/);
+  if(!consent){const query=new URL(h.paths.find(path=>path.startsWith('/care/search?')),'https://example.test');assert.equal(query.searchParams.has('ai_consent'),false);}
  }
 });

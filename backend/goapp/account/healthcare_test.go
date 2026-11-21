@@ -31,6 +31,10 @@ func (f *fakeHealthcareAI) ExplainCare(_ context.Context, _ []map[string]any, c 
 	f.calls++
 	return insurance.CareAdvice{Summary: "Discuss the plan requirements", Recommendations: []insurance.CareAdviceItem{{Index: 0, Explanation: "Confirm network status"}}, Limitations: []string{"Coverage unverified"}}, nil
 }
+
+func (f *fakeHealthcareAI) RankCare(ctx context.Context, _ string, rows []map[string]any, c insurance.HealthContext) (insurance.CareAdvice, error) {
+	return f.ExplainCare(ctx, rows, c)
+}
 func TestAIReviewAndSavedPDFUseTheVerifiedAccountPlan(t *testing.T) {
 	s := supabaseTestService(t)
 	ai := &fakeHealthcareAI{}

@@ -37,7 +37,7 @@ func decodeSchemaJSON(data []byte, value *any) bool {
 func validBoundedSchema(s map[string]any) bool {
 	for key := range s {
 		switch key {
-		case "type", "properties", "required", "additionalProperties", "enum", "items", "minItems":
+		case "type", "properties", "required", "additionalProperties", "enum", "items", "minItems", "maxItems":
 		default:
 			return false
 		}
@@ -83,14 +83,22 @@ func validBoundedSchema(s map[string]any) bool {
 			return false
 		}
 	}
-	if minimum, exists := s["minItems"]; exists {
-		number, ok := minimum.(json.Number)
-		if !ok {
-			return false
-		}
-		value, err := number.Int64()
-		if err != nil || value < 0 {
-			return false
+	var minimum int64
+	for _, keyword := range []string{"minItems", "maxItems"} {
+		if bound, exists := s[keyword]; exists {
+			number, ok := bound.(json.Number)
+			if !ok {
+				return false
+			}
+			value, err := number.Int64()
+			if err != nil || value < 0 {
+				return false
+			}
+			if keyword == "minItems" {
+				minimum = value
+			} else if value < minimum {
+				return false
+			}
 		}
 	}
 	if enum, exists := s["enum"]; exists {
@@ -190,6 +198,12 @@ func matchesBoundedSchema(value any, s map[string]any) bool {
 		if minimum, exists := s["minItems"]; exists {
 			count, _ := minimum.(json.Number).Int64()
 			if int64(len(array)) < count {
+				return false
+			}
+		}
+		if maximum, exists := s["maxItems"]; exists {
+			count, _ := maximum.(json.Number).Int64()
+			if int64(len(array)) > count {
 				return false
 			}
 		}

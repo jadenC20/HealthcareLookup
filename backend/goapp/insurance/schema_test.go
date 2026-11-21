@@ -83,3 +83,29 @@ func TestValidateJSONSchemaMinimumArrayItemsAndAllowedReferences(t *testing.T) {
 		t.Fatal("nonnegative zero minimum rejected")
 	}
 }
+
+func TestValidateJSONSchemaMaximumArrayItems(t *testing.T) {
+	schema := map[string]any{"type": "array", "minItems": 1, "maxItems": 2, "items": map[string]any{"type": "integer", "enum": []int{0, 1}}}
+	for _, data := range []string{`[0]`, `[1,0]`} {
+		if !validateJSONSchema([]byte(data), schema) {
+			t.Errorf("bounded array rejected: %s", data)
+		}
+	}
+	for _, data := range []string{`[]`, `[0,1,0]`, `[2]`} {
+		if validateJSONSchema([]byte(data), schema) {
+			t.Errorf("out-of-bounds array accepted: %s", data)
+		}
+	}
+	for _, maximum := range []any{-1, 0.5, "1", true, nil} {
+		if validateJSONSchema([]byte(`[]`), map[string]any{"type": "array", "maxItems": maximum, "items": stringSchema()}) {
+			t.Errorf("malformed maxItems accepted: %#v", maximum)
+		}
+	}
+	if validateJSONSchema([]byte(`[0]`), map[string]any{"type": "array", "minItems": 2, "maxItems": 1, "items": map[string]any{"type": "integer"}}) {
+		t.Fatal("contradictory array bounds accepted")
+	}
+	empty := map[string]any{"type": "array", "maxItems": 0, "items": map[string]any{"type": "integer"}}
+	if !validateJSONSchema([]byte(`[]`), empty) || validateJSONSchema([]byte(`[0]`), empty) {
+		t.Fatal("zero maximum failed to prohibit unavailable benefit references")
+	}
+}

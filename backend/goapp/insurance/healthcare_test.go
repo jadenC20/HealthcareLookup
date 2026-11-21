@@ -102,3 +102,89 @@ func TestBillExplanationRejectsMissingInputLineIdentifiers(t *testing.T) {
 		t.Fatal("missing input identifiers reached AI generation")
 	}
 }
+
+func TestCloudflareRankCareUsesServiceQueryAndOriginalSourceIndicesWithoutBenefits(t *testing.T) {
+	rows := []map[string]any{
+		{"name": "General practice", "specialty": "Internal medicine", "city": "Albany", "source_url": "https://directory.example/general"},
+		{"name": "Eye practice", "specialty": "Ophthalmology", "city": "Albany", "source_url": "https://directory.example/eyes"},
+	}
+	want := CareAdvice{Summary: "Sourced matches for your search", Recommendations: []CareAdviceItem{
+		{Index: 1, Explanation: "The directory lists this practice's specialty as ophthalmology in Albany.", Questions: []string{"Confirm the practice offers the requested service."}, Benefits: []int{}},
+		{Index: 0, Explanation: "This directory record is a broader specialty match.", Questions: []string{}, Benefits: []int{}},
+	}, Limitations: []string{"Network participation and clinical quality are unverified."}}
+	ai := cloudflareFixtureAI(t, fixtureResponse(t, want), func(payload map[string]any) {
+		content := payload["input"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+		var evidence map[string]any
+		if err := json.Unmarshal([]byte(content), &evidence); err != nil || evidence["service_query"] != "eye exam in Albany" {
+			t.Errorf("service query missing from ranking evidence: %s, %v", content, err)
+		}
+		listings := evidence["listings"].([]any)
+		if listings[1].(map[string]any)["source_url"] != rows[1]["source_url"] {
+			t.Error("ranking did not retain source evidence at the original index")
+		}
+		prompt := payload["instructions"].(string)
+		for _, instruction := range []string{"Rank recommendations in order of best match", "A saved SBC or documented benefits are not required", "not its rank position"} {
+			if !strings.Contains(prompt, instruction) {
+				t.Errorf("ranking instruction missing: %s", instruction)
+			}
+		}
+		format := payload["text"].(map[string]any)["format"].(map[string]any)
+		properties := format["schema"].(map[string]any)["properties"].(map[string]any)
+		recommendations := properties["recommendations"].(map[string]any)
+		if recommendations["minItems"] != float64(1) || recommendations["maxItems"] != float64(10) {
+			t.Errorf("ranking output size is unconstrained: %#v", recommendations)
+		}
+		item := recommendations["items"].(map[string]any)["properties"].(map[string]any)
+		if !reflect.DeepEqual(item["listing_index"].(map[string]any)["enum"], []any{float64(0), float64(1)}) || item["benefit_indices"].(map[string]any)["maxItems"] != float64(0) {
+			t.Errorf("ranking references are unconstrained: %#v", item)
+		}
+	})
+	got, err := ai.RankCare(context.Background(), "eye exam in Albany", rows, HealthContext{Benefits: []Benefit{}, Limited: true})
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("ranking lost grounded source order: got=%+v err=%v", got, err)
+	}
+}
+
+func TestCloudflareRankCareRejectsUnsupportedReferencesAndEmptyRanking(t *testing.T) {
+	for name, recommendations := range map[string][]CareAdviceItem{
+		"unknown_listing":   {{Index: 2, Benefits: []int{}, Questions: []string{}}},
+		"negative_listing":  {{Index: -1, Benefits: []int{}, Questions: []string{}}},
+		"invented_benefit":  {{Index: 0, Benefits: []int{0}, Questions: []string{}}},
+		"duplicate_listing": {{Index: 0, Benefits: []int{}, Questions: []string{}}, {Index: 0, Benefits: []int{}, Questions: []string{}}},
+		"no_ranking":        {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := CareAdvice{Summary: "Search matches", Recommendations: recommendations, Limitations: []string{}}
+			ai := cloudflareFixtureAI(t, fixtureResponse(t, out), nil)
+			if _, err := ai.RankCare(context.Background(), "eye exam", []map[string]any{{"name": "Eye practice", "source_url": "https://directory.example/eyes"}}, HealthContext{Benefits: []Benefit{}}); err == nil {
+				t.Fatal("unsupported care ranking accepted")
+			}
+		})
+	}
+}
+
+func TestCloudflareCareGuidanceConstrainsKnownBenefitIndicesAndAllowsNoRankings(t *testing.T) {
+	plan := HealthContext{Benefits: []Benefit{{Name: "specialist", Value: "Refer to plan", Page: 1, Quote: "See plan terms"}}}
+	for _, indices := range [][]int{{0}, {1}} {
+		out := CareAdvice{Summary: "Compare sourced records", Recommendations: []CareAdviceItem{{Index: 0, Explanation: "Confirm the plan restriction.", Questions: []string{}, Benefits: indices}}, Limitations: []string{}}
+		ai := cloudflareFixtureAI(t, fixtureResponse(t, out), func(payload map[string]any) {
+			format := payload["text"].(map[string]any)["format"].(map[string]any)
+			recommendations := format["schema"].(map[string]any)["properties"].(map[string]any)["recommendations"].(map[string]any)
+			if _, exists := recommendations["minItems"]; exists {
+				t.Error("ExplainCare unexpectedly requires ranking output")
+			}
+			benefits := recommendations["items"].(map[string]any)["properties"].(map[string]any)["benefit_indices"].(map[string]any)
+			if !reflect.DeepEqual(benefits["items"].(map[string]any)["enum"], []any{float64(0)}) {
+				t.Error("known benefit references missing from schema")
+			}
+		})
+		_, err := ai.ExplainCare(context.Background(), []map[string]any{{"name": "Sourced practice"}}, plan)
+		if (err == nil) != (indices[0] == 0) {
+			t.Fatalf("benefit grounding failed: indices=%v err=%v", indices, err)
+		}
+	}
+	ai := cloudflareFixtureAI(t, fixtureResponse(t, CareAdvice{Summary: "No sourced matches", Recommendations: []CareAdviceItem{}, Limitations: []string{}}), nil)
+	if _, err := ai.RankCare(context.Background(), "eye exam", nil, HealthContext{}); err != nil {
+		t.Fatalf("empty source list required an invented ranking: %v", err)
+	}
+}

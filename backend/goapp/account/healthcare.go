@@ -19,6 +19,7 @@ type healthcareAI interface {
 	ExtractBill(context.Context, insurance.Document) (insurance.BillExtraction, error)
 	ReviewBill(context.Context, any, map[string]any, insurance.HealthContext) (insurance.BillAdvice, error)
 	ExplainCare(context.Context, []map[string]any, insurance.HealthContext) (insurance.CareAdvice, error)
+	RankCare(context.Context, string, []map[string]any, insurance.HealthContext) (insurance.CareAdvice, error)
 }
 
 func (s *Service) healthContext(user User) insurance.HealthContext {

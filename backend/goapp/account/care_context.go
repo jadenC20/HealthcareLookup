@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+
+	"clearcare/insurance"
 )
 
 // SearchCare keeps the directory useful without an SBC or AI response. Plan
@@ -29,6 +32,7 @@ func (s *Service) SearchCare(w http.ResponseWriter, r *http.Request) {
 	}
 	plan := s.healthContext(u)
 	result["insurance_context"] = plan
+	result["ranking"] = map[string]any{"status": "not_requested", "ranked_count": 0}
 	if r.URL.Query().Get("ai_consent") == "true" {
 		rows := []map[string]any{}
 		if items, ok := result["results"].([]any); ok {
@@ -46,12 +50,41 @@ func (s *Service) SearchCare(w http.ResponseWriter, r *http.Request) {
 			limit := httptest.NewRecorder()
 			if !s.allowHealthcareAI(limit, u) {
 				result["ai"] = map[string]any{"status": "unavailable", "detail": "Plan guidance request limit reached. Provider results are still available."}
-			} else if advice, err := s.healthAI.ExplainCare(r.Context(), rows, plan); err != nil {
+				result["ranking"] = map[string]any{"status": "unavailable", "ranked_count": 0}
+			} else if advice, err := s.healthAI.RankCare(r.Context(), strings.TrimSpace(r.URL.Query().Get("q")), rows, plan); err != nil {
 				result["ai"] = map[string]any{"status": "unavailable", "detail": err.Error()}
+				result["ranking"] = map[string]any{"status": "unavailable", "ranked_count": 0}
+			} else if !applyCareRanking(rows, advice) {
+				result["ai"] = map[string]any{"status": "unavailable", "detail": "AI did not return a supported ranking. Directory results remain available."}
+				result["ranking"] = map[string]any{"status": "unavailable", "ranked_count": 0}
 			} else {
 				result["ai"] = map[string]any{"status": "completed", "result": advice}
+				result["ranking"] = map[string]any{"status": "completed", "ranked_count": len(advice.Recommendations), "evaluated_count": len(rows)}
 			}
+		} else {
+			result["ai"] = map[string]any{"status": "no_data", "detail": "No sourced providers were found to rank. Try a broader service or location."}
+			result["ranking"] = map[string]any{"status": "no_data", "ranked_count": 0}
 		}
 	}
 	respond(w, 200, result)
+}
+
+// Preserve registry order so advice listing indices still refer to the same
+// records. The frontend sorts the explicit rank without changing source IDs.
+func applyCareRanking(rows []map[string]any, advice insurance.CareAdvice) bool {
+	if len(advice.Recommendations) == 0 || len(advice.Recommendations) > 10 {
+		return false
+	}
+	seen := map[int]bool{}
+	for _, item := range advice.Recommendations {
+		if item.Index < 0 || item.Index >= len(rows) || seen[item.Index] || strings.TrimSpace(item.Explanation) == "" {
+			return false
+		}
+		seen[item.Index] = true
+	}
+	for rank, item := range advice.Recommendations {
+		rows[item.Index]["ai_rank"] = rank + 1
+		rows[item.Index]["ai_reason"] = item.Explanation
+	}
+	return true
 }
